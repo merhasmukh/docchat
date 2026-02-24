@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Chat</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- HEADER -->
+    <header>
+      <div class="header-left">
+        <h1>Document Chat</h1>
+        <span id="doc-indicator">No document loaded</span>
+      </div>
+      <button id="reset-btn" class="hidden">Change Document</button>
+    </header>
+
+    <!-- UPLOAD SECTION -->
+    <section id="upload-section">
+      <div id="drop-zone">
+        <div class="drop-icon">&#8593;</div>
+        <p class="drop-title">Drop your file here</p>
+        <p class="drop-sub">or click to select a PDF or image</p>
+        <p class="drop-formats">Supported: PDF, PNG, JPG, TIFF, BMP, WEBP &mdash; max 50 MB</p>
+        <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" hidden>
+        <button id="upload-btn" class="btn-primary">Select File</button>
+      </div>
+
+      <div id="upload-status" class="hidden">
+        <div class="spinner"></div>
+        <p id="upload-message">Processing document&hellip;</p>
+        <p class="upload-note">This may take a minute for large PDFs.</p>
+      </div>
+
+      <div id="upload-error" class="hidden">
+        <p id="error-message"></p>
+        <button id="retry-btn" class="btn-secondary">Try Again</button>
+      </div>
+    </section>
+
+    <!-- CHAT SECTION -->
+    <section id="chat-section" class="hidden">
+      <div id="chat-window">
+        <div class="welcome-msg">
+          Document loaded. Ask me anything about it.
+        </div>
+      </div>
+
+      <div id="input-area">
+        <textarea
+          id="question-input"
+          placeholder="Ask a question about the document… (Enter to send, Shift+Enter for newline)"
+          rows="2"
+        ></textarea>
+        <button id="send-btn" class="btn-primary">Send</button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Markdown parser + HTML sanitizer (loaded before main.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
