@@ -1,3 +1,8 @@
+// ─── Navbar scroll shadow ─────────────────────────────────────────────────────
+window.addEventListener("scroll", () => {
+  document.getElementById("app-navbar").classList.toggle("scrolled", window.scrollY > 10);
+});
+
 // ─── CSRF helper (reads Django's csrftoken cookie) ───────────────────────────
 function getCookie(name) {
   const val = document.cookie.split("; ").find(r => r.startsWith(name + "="));
@@ -104,19 +109,25 @@ function showChatMode(filename) {
   uploadSection.classList.add("hidden");
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
-  docIndicator.textContent = `Document: ${filename}`;
+  docIndicator.innerHTML = `<i class="fa-solid fa-circle-dot status-dot"></i> ${filename}`;
+  docIndicator.classList.add("loaded");
   questionInput.focus();
 }
 
 function showUploadMode() {
   chatSection.classList.add("hidden");
-  chatWindow.innerHTML = '<div class="welcome-msg">Document loaded. Ask me anything about it.</div>';
+  chatWindow.innerHTML = `
+    <div class="welcome-msg">
+      <i class="fa-regular fa-comment-dots welcome-icon"></i>
+      <p>Document loaded. Ask me anything about it.</p>
+    </div>`;
   uploadSection.classList.remove("hidden");
   uploadStatus.classList.add("hidden");
   uploadError.classList.add("hidden");
   dropZone.classList.remove("hidden");
   resetBtn.classList.add("hidden");
-  docIndicator.textContent = "No document loaded";
+  docIndicator.innerHTML = `<i class="fa-regular fa-circle-dot status-dot"></i> No document loaded`;
+  docIndicator.classList.remove("loaded");
   fileInput.value = "";
 }
 
@@ -244,12 +255,12 @@ function appendAssistantBubble() {
   const copyBtn = document.createElement("button");
   copyBtn.className = "copy-btn";
   copyBtn.title = "Copy response";
-  copyBtn.innerHTML = "&#x2398;"; // ⎘ copy symbol
+  copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
   copyBtn.addEventListener("click", () => {
     const text = div.innerText;
     navigator.clipboard.writeText(text).then(() => {
-      copyBtn.innerHTML = "&#10003;"; // ✓
-      setTimeout(() => { copyBtn.innerHTML = "&#x2398;"; }, 1500);
+      copyBtn.innerHTML = '<i class="fa-solid fa-check"></i>';
+      setTimeout(() => { copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>'; }, 1500);
     });
   });
 

@@ -3,67 +3,115 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document Chat</title>
+  <title>DocChat</title>
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <!-- Google Fonts – Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-  <div id="app">
 
-    <!-- HEADER -->
-    <header>
-      <div class="header-left">
-        <h1>Document Chat</h1>
-        <span id="doc-indicator">No document loaded</span>
+  <!-- ── NAVBAR ──────────────────────────────────────────────────────── -->
+  <nav class="app-navbar" id="app-navbar">
+    <div class="navbar-inner">
+      <div class="navbar-brand-group">
+        <i class="fa-solid fa-file-lines brand-icon"></i>
+        <div class="brand-text">
+          <span class="brand-name">DocChat</span>
+          <span class="brand-sub">Document Q&amp;A</span>
+        </div>
       </div>
-      <button id="reset-btn" class="hidden">Change Document</button>
-    </header>
+
+      <div class="navbar-right">
+        <span id="doc-indicator" class="doc-indicator">
+          <i class="fa-regular fa-circle-dot status-dot"></i>
+          No document loaded
+        </span>
+        <button id="reset-btn" class="btn-change hidden">
+          <i class="fa-solid fa-arrows-rotate me-1"></i>Change Document
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── MAIN CONTENT ────────────────────────────────────────────────── -->
+  <div id="app">
 
     <!-- UPLOAD SECTION -->
     <section id="upload-section">
-      <div id="drop-zone">
-        <div class="drop-icon">&#8593;</div>
-        <p class="drop-title">Drop your file here</p>
-        <p class="drop-sub">or click to select a PDF or image</p>
-        <p class="drop-formats">Supported: PDF, PNG, JPG, TIFF, BMP, WEBP &mdash; max 50 MB</p>
-        <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" hidden>
-        <button id="upload-btn" class="btn-primary">Select File</button>
-      </div>
+      <div class="upload-card">
 
-      <div id="upload-status" class="hidden">
-        <div class="spinner"></div>
-        <p id="upload-message">Processing document&hellip;</p>
-        <p class="upload-note">This may take a minute for large PDFs.</p>
-      </div>
+        <div id="drop-zone">
+          <div class="drop-icon-wrap">
+            <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
+          </div>
+          <p class="drop-title">Drop your document here</p>
+          <p class="drop-sub">or click the button below to select a file</p>
+          <p class="drop-formats">
+            <i class="fa-regular fa-file-pdf me-1"></i>PDF &nbsp;·&nbsp;
+            <i class="fa-regular fa-image me-1"></i>PNG · JPG · TIFF · BMP · WEBP
+            &nbsp;&mdash;&nbsp; max 50 MB
+          </p>
+          <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" hidden>
+          <button id="upload-btn" class="btn-primary">
+            <i class="fa-solid fa-folder-open me-2"></i>Select File
+          </button>
+        </div>
 
-      <div id="upload-error" class="hidden">
-        <p id="error-message"></p>
-        <button id="retry-btn" class="btn-secondary">Try Again</button>
+        <div id="upload-status" class="hidden">
+          <div class="spinner"></div>
+          <p id="upload-message" class="upload-msg">Processing document&hellip;</p>
+          <p class="upload-note">
+            <i class="fa-regular fa-clock me-1"></i>This may take a minute for large PDFs.
+          </p>
+        </div>
+
+        <div id="upload-error" class="hidden">
+          <div class="error-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+          <p id="error-message"></p>
+          <button id="retry-btn" class="btn-outline">
+            <i class="fa-solid fa-rotate-left me-2"></i>Try Again
+          </button>
+        </div>
+
       </div>
     </section>
 
     <!-- CHAT SECTION -->
     <section id="chat-section" class="hidden">
+
       <div id="chat-window">
         <div class="welcome-msg">
-          Document loaded. Ask me anything about it.
+          <i class="fa-regular fa-comment-dots welcome-icon"></i>
+          <p>Document loaded. Ask me anything about it.</p>
         </div>
       </div>
 
       <div id="input-area">
         <textarea
           id="question-input"
-          placeholder="Ask a question about the document… (Enter to send, Shift+Enter for newline)"
+          placeholder="Ask a question about the document… (Enter to send, Shift+Enter for new line)"
           rows="2"
         ></textarea>
-        <button id="send-btn" class="btn-primary">Send</button>
+        <button id="send-btn" class="btn-send">
+          <i class="fa-solid fa-paper-plane"></i>
+        </button>
       </div>
+
     </section>
 
-  </div>
+  </div><!-- /#app -->
 
-  <!-- Markdown parser + HTML sanitizer (loaded before main.js) -->
+  <!-- Markdown parser + sanitizer -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <!-- Bootstrap JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
 </html>
