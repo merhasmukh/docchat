@@ -1,5 +1,4 @@
 import os
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -75,6 +74,7 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOGGING = {
@@ -129,9 +129,4 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
 # ── Startup: ensure required directories exist ─────────────────────────────
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(MARKDOWN_FOLDER, exist_ok=True)
-
-# Clean up stale files older than 24 hours on startup
-for _fname in os.listdir(MARKDOWN_FOLDER):
-    _fpath = os.path.join(MARKDOWN_FOLDER, _fname)
-    if os.path.getmtime(_fpath) < time.time() - 86400:
-        os.remove(_fpath)
+# Note: no automatic cleanup — admin-managed document files must persist indefinitely.

@@ -12,7 +12,7 @@
   <!-- Google Fonts – Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=2">
 </head>
 <body>
 
@@ -30,10 +30,10 @@
       <div class="navbar-right">
         <span id="doc-indicator" class="doc-indicator">
           <i class="fa-regular fa-circle-dot status-dot"></i>
-          No document loaded
+          <span id="doc-indicator-text">Loading…</span>
         </span>
-        <button id="reset-btn" class="btn-change hidden">
-          <i class="fa-solid fa-arrows-rotate me-1"></i>Change Document
+        <button id="reset-btn" class="btn-change hidden" title="Clear conversation history">
+          <i class="fa-solid fa-arrows-rotate me-1"></i>New Chat
         </button>
       </div>
     </div>
@@ -42,43 +42,12 @@
   <!-- ── MAIN CONTENT ────────────────────────────────────────────────── -->
   <div id="app">
 
-    <!-- UPLOAD SECTION -->
-    <section id="upload-section">
-      <div class="upload-card">
-
-        <div id="drop-zone">
-          <div class="drop-icon-wrap">
-            <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
-          </div>
-          <p class="drop-title">Drop your document here</p>
-          <p class="drop-sub">or click the button below to select a file</p>
-          <p class="drop-formats">
-            <i class="fa-regular fa-file-pdf me-1"></i>PDF &nbsp;·&nbsp;
-            <i class="fa-regular fa-image me-1"></i>PNG · JPG · TIFF · BMP · WEBP
-            &nbsp;&mdash;&nbsp; max 50 MB
-          </p>
-          <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" hidden>
-          <button id="upload-btn" class="btn-primary">
-            <i class="fa-solid fa-folder-open me-2"></i>Select File
-          </button>
-        </div>
-
-        <div id="upload-status" class="hidden">
-          <div class="spinner"></div>
-          <p id="upload-message" class="upload-msg">Processing document&hellip;</p>
-          <p class="upload-note">
-            <i class="fa-regular fa-clock me-1"></i>This may take a minute for large PDFs.
-          </p>
-        </div>
-
-        <div id="upload-error" class="hidden">
-          <div class="error-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-          <p id="error-message"></p>
-          <button id="retry-btn" class="btn-outline">
-            <i class="fa-solid fa-rotate-left me-2"></i>Try Again
-          </button>
-        </div>
-
+    <!-- NO DOCUMENT BANNER (shown when no active document) -->
+    <section id="no-doc-section" class="hidden">
+      <div class="upload-card" style="text-align:center;padding:3rem 2rem;">
+        <i class="fa-solid fa-file-circle-xmark" style="font-size:3rem;color:var(--text-muted);margin-bottom:1rem;"></i>
+        <p style="font-size:1.1rem;color:var(--text-muted);">No document is currently available.</p>
+        <p style="color:var(--text-muted);">Please contact the administrator to load a document.</p>
       </div>
     </section>
 
@@ -107,11 +76,51 @@
 
   </div><!-- /#app -->
 
+  <!-- ── NAME / EMAIL MODAL ──────────────────────────────────────────────── -->
+  <div id="user-modal" class="um-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="um-title">
+    <div class="um-card">
+
+      <!-- Branded header strip -->
+      <div class="um-accent-bar">
+        <i class="fa-solid fa-file-lines"></i>
+        <span>DocChat</span>
+      </div>
+
+      <!-- Form body -->
+      <div class="um-body">
+        <h2 class="um-title" id="um-title">Start a new chat</h2>
+        <p class="um-subtitle">Please enter your details to continue.</p>
+
+        <form id="user-form" novalidate>
+          <div class="um-field">
+            <label for="user-name">Name</label>
+            <div class="um-input-wrap">
+              <i class="fa-regular fa-user um-input-icon"></i>
+              <input type="text" id="user-name" placeholder="Your full name" autocomplete="name" required>
+            </div>
+          </div>
+          <div class="um-field">
+            <label for="user-email">Email</label>
+            <div class="um-input-wrap">
+              <i class="fa-regular fa-envelope um-input-icon"></i>
+              <input type="email" id="user-email" placeholder="you@example.com" autocomplete="email" required>
+            </div>
+          </div>
+          <p id="modal-error" class="um-error hidden"></p>
+          <button type="submit" id="modal-submit-btn" class="um-submit">
+            <i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Markdown parser + sanitizer -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
   <!-- Bootstrap JS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/js/main.js"></script>
+  <script src="/static/js/main.js?v=5"></script>
 </body>
 </html>

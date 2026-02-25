@@ -9,12 +9,24 @@ function getCookie(name) {
   return val ? decodeURIComponent(val.split("=")[1]) : null;
 }
 
+// ─── Session token (localStorage — no Django session dependency) ──────────────
+const TOKEN_KEY = "docchat_token";
+const getToken  = () => localStorage.getItem(TOKEN_KEY) || "";
+const setToken  = (t) => localStorage.setItem(TOKEN_KEY, t);
+const clearToken= () => localStorage.removeItem(TOKEN_KEY);
+
+/** Build common headers for every API call. */
+function apiHeaders(includeJson = false) {
+  const h = { "X-Chat-Token": getToken() };
+  if (includeJson) h["Content-Type"] = "application/json";
+  return h;
+}
+
 // ─── Markdown config ──────────────────────────────────────────────────────────
 marked.setOptions({ breaks: true, gfm: true });
 
 function renderMarkdown(raw) {
   const html = marked.parse(raw);
-  // Wrap <table> in a scroll container — works regardless of marked version
   const wrapped = html
     .replace(/<table>/g, '<div class="table-scroll"><table>')
     .replace(/<\/table>/g, "</table></div>");
@@ -22,124 +34,171 @@ function renderMarkdown(raw) {
 }
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
-const fileInput     = document.getElementById("file-input");
-const uploadBtn     = document.getElementById("upload-btn");
-const dropZone      = document.getElementById("drop-zone");
-const uploadSection = document.getElementById("upload-section");
-const uploadStatus  = document.getElementById("upload-status");
-const uploadMessage = document.getElementById("upload-message");
-const uploadError   = document.getElementById("upload-error");
-const errorMessage  = document.getElementById("error-message");
-const retryBtn      = document.getElementById("retry-btn");
-const chatSection   = document.getElementById("chat-section");
-const chatWindow    = document.getElementById("chat-window");
-const questionInput = document.getElementById("question-input");
-const sendBtn       = document.getElementById("send-btn");
-const resetBtn      = document.getElementById("reset-btn");
-const docIndicator  = document.getElementById("doc-indicator");
+const chatSection     = document.getElementById("chat-section");
+const noDocSection    = document.getElementById("no-doc-section");
+const chatWindow      = document.getElementById("chat-window");
+const questionInput   = document.getElementById("question-input");
+const sendBtn         = document.getElementById("send-btn");
+const resetBtn        = document.getElementById("reset-btn");
+const docIndicator    = document.getElementById("doc-indicator");
+const docIndicatorTxt = document.getElementById("doc-indicator-text");
 
-// ─── Page load: restore state if session has a document loaded ────────────────
+// Modal refs
+const userModal      = document.getElementById("user-modal");
+const userForm       = document.getElementById("user-form");
+const nameInput      = document.getElementById("user-name");
+const emailInput     = document.getElementById("user-email");
+const modalError     = document.getElementById("modal-error");
+const modalSubmitBtn = document.getElementById("modal-submit-btn");
+
+// Track the active document filename
+let currentFilename = null;
+
+// ─── Page load: check active document + existing session token ────────────────
 (async function checkStatus() {
+  let documentLoaded = false;
+  let sessionActive  = false;
   try {
-    const res = await fetch("/status/");
+    const res  = await fetch("/status/", { headers: apiHeaders() });
     const data = await res.json();
-    if (data.document_loaded) showChatMode(data.filename);
-  } catch (_) {}
+    documentLoaded  = data.document_loaded;
+    currentFilename = data.filename;
+    sessionActive   = data.session_active;
+  } catch (_) {
+    // Network error — treat as no document
+  }
+
+  if (documentLoaded) {
+    if (sessionActive) {
+      showChatMode(currentFilename);
+      loadHistory();           // re-render previous messages from DB
+    } else {
+      showUserModal();
+    }
+  } else {
+    showNoDocMode();
+  }
 })();
 
-// ─── Upload interactions ──────────────────────────────────────────────────────
-uploadBtn.addEventListener("click", () => fileInput.click());
-
-dropZone.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  dropZone.classList.add("dragover");
-});
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
-dropZone.addEventListener("drop", (e) => {
-  e.preventDefault();
-  dropZone.classList.remove("dragover");
-  const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
-});
-fileInput.addEventListener("change", () => {
-  if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
-});
-retryBtn.addEventListener("click", () => {
-  uploadError.classList.add("hidden");
-  dropZone.classList.remove("hidden");
-  fileInput.value = "";
-});
-
-// ─── Upload logic ─────────────────────────────────────────────────────────────
-async function uploadFile(file) {
-  if (file.size > 50 * 1024 * 1024) {
-    showUploadError("File too large. Maximum size is 50 MB.");
-    return;
-  }
-  dropZone.classList.add("hidden");
-  uploadError.classList.add("hidden");
-  uploadStatus.classList.remove("hidden");
-  uploadMessage.textContent = `Processing "${file.name}"… this may take a minute.`;
-
-  const formData = new FormData();
-  formData.append("file", file);
-  try {
-    const res = await fetch("/upload/", {
-      method: "POST",
-      headers: { "X-CSRFToken": getCookie("csrftoken") },
-      body: formData,
-    });
-    const data = await res.json();
-    if (data.status === "ok") showChatMode(data.filename);
-    else showUploadError(data.message || "Upload failed.");
-  } catch (err) {
-    showUploadError("Network error: " + err.message);
-  }
-}
-
-function showUploadError(msg) {
-  uploadStatus.classList.add("hidden");
-  dropZone.classList.add("hidden");
-  errorMessage.textContent = msg;
-  uploadError.classList.remove("hidden");
-}
-
-// ─── Mode switching ───────────────────────────────────────────────────────────
+// ─── Mode helpers ─────────────────────────────────────────────────────────────
 function showChatMode(filename) {
-  uploadSection.classList.add("hidden");
+  userModal.classList.add("hidden");
+  noDocSection.classList.add("hidden");
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
-  docIndicator.innerHTML = `<i class="fa-solid fa-circle-dot status-dot"></i> ${filename}`;
+  docIndicatorTxt.textContent = filename;
   docIndicator.classList.add("loaded");
   questionInput.focus();
 }
 
-function showUploadMode() {
+function showNoDocMode() {
+  userModal.classList.add("hidden");
   chatSection.classList.add("hidden");
+  noDocSection.classList.remove("hidden");
+  resetBtn.classList.add("hidden");
+  docIndicatorTxt.textContent = "No document loaded";
+  docIndicator.classList.remove("loaded");
+}
+
+// ─── Load history on session resume ──────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res  = await fetch("/history/", { headers: apiHeaders() });
+    const data = await res.json();
+    if (!data.messages || data.messages.length === 0) return;
+
+    for (const msg of data.messages) {
+      if (msg.role === "user") {
+        appendUserBubble(msg.content);
+      } else {
+        const bubble = appendAssistantBubble();
+        bubble.classList.remove("streaming");
+        setAssistantContent(bubble, msg.content);
+      }
+    }
+    scrollToBottom();
+  } catch (_) {}
+}
+
+// ─── User info modal ──────────────────────────────────────────────────────────
+function showUserModal() {
+  chatSection.classList.add("hidden");
+  resetBtn.classList.add("hidden");
+  noDocSection.classList.add("hidden");
+  if (currentFilename) {
+    docIndicatorTxt.textContent = currentFilename;
+    docIndicator.classList.add("loaded");
+  }
+  nameInput.value  = "";
+  emailInput.value = "";
+  modalError.classList.add("hidden");
+  modalSubmitBtn.disabled = false;
+  modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+  userModal.classList.remove("hidden");
+  nameInput.focus();
+}
+
+userForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name  = nameInput.value.trim();
+  const email = emailInput.value.trim();
+
+  if (!name) {
+    modalError.textContent = "Please enter your name.";
+    modalError.classList.remove("hidden");
+    return;
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    modalError.textContent = "Please enter a valid email address.";
+    modalError.classList.remove("hidden");
+    return;
+  }
+
+  modalError.classList.add("hidden");
+  modalSubmitBtn.disabled = true;
+  modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
+
+  try {
+    const res = await fetch("/start-session/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": getCookie("csrftoken"),
+      },
+      body: JSON.stringify({ name, email }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      setToken(data.token);         // persist token to localStorage
+      modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+      showChatMode(currentFilename);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      modalError.textContent = data.message || "Failed to start session. Please try again.";
+      modalError.classList.remove("hidden");
+      modalSubmitBtn.disabled = false;
+      modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+    }
+  } catch (_) {
+    modalError.textContent = "Network error. Please try again.";
+    modalError.classList.remove("hidden");
+    modalSubmitBtn.disabled = false;
+    modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+  }
+});
+
+// ─── Reset (end session → clear token → show modal for new session) ───────────
+resetBtn.addEventListener("click", () => {
+  clearToken();    // drop the localStorage token — old session stays in DB
+
   chatWindow.innerHTML = `
     <div class="welcome-msg">
       <i class="fa-regular fa-comment-dots welcome-icon"></i>
       <p>Document loaded. Ask me anything about it.</p>
     </div>`;
-  uploadSection.classList.remove("hidden");
-  uploadStatus.classList.add("hidden");
-  uploadError.classList.add("hidden");
-  dropZone.classList.remove("hidden");
-  resetBtn.classList.add("hidden");
-  docIndicator.innerHTML = `<i class="fa-regular fa-circle-dot status-dot"></i> No document loaded`;
-  docIndicator.classList.remove("loaded");
-  fileInput.value = "";
-}
 
-// ─── Reset ────────────────────────────────────────────────────────────────────
-resetBtn.addEventListener("click", async () => {
-  try {
-    await fetch("/reset/", {
-      method: "POST",
-      headers: { "X-CSRFToken": getCookie("csrftoken") },
-    });
-  } catch (_) {}
-  showUploadMode();
+  showUserModal();
 });
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
@@ -168,7 +227,7 @@ async function streamChat(question, bubble) {
     const res = await fetch("/chat/", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        ...apiHeaders(true),
         "X-CSRFToken": getCookie("csrftoken"),
       },
       body: JSON.stringify({ question }),
@@ -183,7 +242,7 @@ async function streamChat(question, bubble) {
       return;
     }
 
-    const reader = res.body.getReader();
+    const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -200,7 +259,6 @@ async function streamChat(question, bubble) {
         const token = line.slice(6);
 
         if (token === "[DONE]") {
-          // Final render without the blinking cursor
           setAssistantContent(bubble, rawText);
           bubble.classList.remove("streaming");
           setInputEnabled(true);
@@ -215,9 +273,7 @@ async function streamChat(question, bubble) {
           return;
         }
 
-        // Unescape newlines encoded by the server, accumulate
         rawText += token.replace(/\\n/g, "\n");
-        // Re-render markdown as tokens arrive
         setAssistantContent(bubble, rawText);
         scrollToBottom();
       }
@@ -235,7 +291,7 @@ function appendUserBubble(text) {
   removeWelcome();
   const div = document.createElement("div");
   div.className = "bubble user";
-  div.textContent = text;   // user text shown as-is (no markdown)
+  div.textContent = text;
   chatWindow.appendChild(div);
   scrollToBottom();
 }
@@ -247,7 +303,6 @@ function appendAssistantBubble() {
 
   const div = document.createElement("div");
   div.className = "bubble assistant streaming";
-  // empty until first token arrives
 
   const actions = document.createElement("div");
   actions.className = "bubble-actions";
@@ -273,7 +328,6 @@ function appendAssistantBubble() {
 }
 
 function setAssistantContent(bubble, rawMarkdown) {
-  // Wrap in a div so block elements (tables, lists) are scoped
   bubble.innerHTML = `<div class="md-body">${renderMarkdown(rawMarkdown)}</div>`;
 }
 

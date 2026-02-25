@@ -4,7 +4,7 @@ from django.db import models
 # ── Pricing ────────────────────────────────────────────────────────────────────
 
 class ModelPricing(models.Model):
-    PROVIDER_CHOICES = [("ollama", "Ollama"), ("gemini", "Gemini")]
+    PROVIDER_CHOICES = [("ollama", "Ollama"), ("gemini", "Gemini"), ("sarvam", "Sarvam AI")]
 
     provider                 = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
     model_name               = models.CharField(max_length=100, help_text="e.g. gemini-2.0-flash")
@@ -32,6 +32,8 @@ class ModelPricing(models.Model):
 
 class ChatSession(models.Model):
     session_key         = models.CharField(max_length=40, unique=True)
+    user_name           = models.CharField(max_length=200, blank=True, default="")
+    user_email          = models.CharField(max_length=254, blank=True, default="")
     document_name       = models.CharField(max_length=500, blank=True)
     started_at          = models.DateTimeField(auto_now_add=True)
     last_activity       = models.DateTimeField(auto_now=True)
@@ -78,10 +80,49 @@ class ChatMessage(models.Model):
         return f"{self.created_at:%Y-%m-%d %H:%M} | {self.provider}/{self.model_name} | ₹{self.total_cost}"
 
 
+# ── Document (admin-managed) ───────────────────────────────────────────────────
+
+class Document(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("ready",   "Ready"),
+        ("error",   "Error"),
+    ]
+
+    original_filename = models.CharField(max_length=500)
+    markdown_path     = models.CharField(max_length=500, blank=True)
+    json_path         = models.CharField(max_length=500, blank=True)
+    rag_chunks_path   = models.CharField(max_length=500, blank=True)
+    gemini_cache_name = models.CharField(max_length=200, blank=True)
+    total_pages       = models.IntegerField(default=0)
+    char_count        = models.IntegerField(default=0)
+    context_mode      = models.CharField(max_length=20, default="full")
+    status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    error_message     = models.TextField(blank=True)
+    is_active         = models.BooleanField(default=False)
+    created_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Document"
+        ordering     = ["-created_at"]
+
+    def __str__(self):
+        flag = "● ACTIVE" if self.is_active else self.get_status_display()
+        return f"{self.original_filename} [{flag}]"
+
+    @classmethod
+    def get_active(cls):
+        """Return the currently active, ready document, or None."""
+        return cls.objects.filter(is_active=True, status="ready").first()
+
+
+# ── LLM Config ─────────────────────────────────────────────────────────────────
+
 class LLMConfig(models.Model):
     PROVIDER_CHOICES = [
         ("ollama", "Ollama (Local)"),
         ("gemini", "Gemini (Google)"),
+        ("sarvam", "Sarvam AI"),
     ]
     OCR_ENGINE_CHOICES = [
         ("docling",       "Docling (default)"),
@@ -109,6 +150,11 @@ class LLMConfig(models.Model):
         default="gemini-2.0-flash",
         help_text="Gemini model ID, e.g. gemini-2.0-flash",
     )
+    sarvam_model = models.CharField(
+        max_length=100,
+        default="sarvam-m",
+        help_text="Sarvam AI model ID, e.g. sarvam-m",
+    )
     ocr_engine = models.CharField(
         max_length=20,
         choices=OCR_ENGINE_CHOICES,
@@ -130,7 +176,12 @@ class LLMConfig(models.Model):
         verbose_name_plural = "LLM Configuration"
 
     def __str__(self):
-        llm = f"Ollama/{self.ollama_model}" if self.provider == "ollama" else f"Gemini/{self.gemini_model}"
+        if self.provider == "gemini":
+            llm = f"Gemini/{self.gemini_model}"
+        elif self.provider == "sarvam":
+            llm = f"Sarvam/{self.sarvam_model}"
+        else:
+            llm = f"Ollama/{self.ollama_model}"
         return f"{llm} | OCR: {self.get_ocr_engine_display()}"
 
     @classmethod
