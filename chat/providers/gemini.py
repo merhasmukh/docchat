@@ -9,6 +9,10 @@ from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversatio
 
 logger = logging.getLogger("chat.pipeline")
 
+
+class GeminiCacheExpiredError(Exception):
+    """Raised when a Gemini cached content is not found or has expired (HTTP 403)."""
+
 _DOCUMENT_SYSTEM_PROMPT = (
     "You are a helpful assistant. The following is extracted markdown text from a document.\n"
     "Use ONLY this context to answer the user's questions.\n"
@@ -83,7 +87,7 @@ def delete_gemini_cache(cache_name: str) -> None:
 def _build_gemini_contents(question: str, history: list) -> list:
     """Convert Ollama-style message history to Gemini Content objects."""
     contents = []
-    for m in history[-40:]:
+    for m in history[-20:]:
         role = "model" if m["role"] == "assistant" else m["role"]
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
     contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=question)]))
@@ -124,8 +128,15 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
                 output_chars += len(token)
                 yield token
     except Exception as exc:
+        if cached and (
+            "403" in str(exc)
+            or "PERMISSION_DENIED" in str(exc)
+            or "CachedContent not found" in str(exc)
+        ):
+            logger.warning("Gemini cache expired/not found, will retry without cache: %s", exc)
+            raise GeminiCacheExpiredError(str(exc)) from exc
         if cached:
-            logger.warning("Gemini cached stream failed (cache may have expired): %s", exc)
+            logger.warning("Gemini cached stream failed: %s", exc)
         raise
     finally:
         if usage_out is not None and last_chunk is not None:

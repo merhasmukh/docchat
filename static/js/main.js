@@ -43,13 +43,30 @@ const resetBtn        = document.getElementById("reset-btn");
 const docIndicator    = document.getElementById("doc-indicator");
 const docIndicatorTxt = document.getElementById("doc-indicator-text");
 
-// Modal refs
-const userModal      = document.getElementById("user-modal");
+// Modal refs — step 1
+const userModal       = document.getElementById("user-modal");
+const modalCloseBtn   = document.getElementById("modal-close-btn");
 const userForm       = document.getElementById("user-form");
 const nameInput      = document.getElementById("user-name");
 const emailInput     = document.getElementById("user-email");
 const modalError     = document.getElementById("modal-error");
 const modalSubmitBtn = document.getElementById("modal-submit-btn");
+
+// Modal refs — step 2 (OTP)
+const otpStep1     = document.getElementById("um-step-1");
+const otpStep2     = document.getElementById("um-step-2");
+const otpForm      = document.getElementById("otp-form");
+const otpInput     = document.getElementById("otp-input");
+const otpError     = document.getElementById("otp-error");
+const otpSubmitBtn = document.getElementById("otp-submit-btn");
+const otpResendBtn = document.getElementById("otp-resend-btn");
+const otpBackBtn   = document.getElementById("otp-back-btn");
+const otpEmailHint = document.getElementById("otp-email-hint");
+
+// OTP flow state
+let otpVerificationId = null;
+let otpCountdownTimer = null;
+let otpResendUsed     = false;
 
 // Track the active document filename
 let currentFilename = null;
@@ -129,6 +146,8 @@ function showUserModal() {
     docIndicatorTxt.textContent = currentFilename;
     docIndicator.classList.add("loaded");
   }
+  // Always reset to step 1
+  showOtpStep(1);
   nameInput.value  = "";
   emailInput.value = "";
   modalError.classList.add("hidden");
@@ -138,6 +157,51 @@ function showUserModal() {
   nameInput.focus();
 }
 
+function showOtpStep(step) {
+  if (step === 1) {
+    otpStep1.classList.remove("hidden");
+    otpStep2.classList.add("hidden");
+    stopOtpCountdown();
+  } else {
+    otpStep1.classList.add("hidden");
+    otpStep2.classList.remove("hidden");
+  }
+}
+
+// ─── Countdown timer ──────────────────────────────────────────────────────────
+function startOtpCountdown() {
+  stopOtpCountdown();
+  let secondsLeft = 60;
+  const timerEl = document.getElementById("otp-timer");
+  if (timerEl) timerEl.textContent = secondsLeft;
+  otpResendBtn.disabled = true;
+  otpResendBtn.classList.remove("available");
+
+  otpCountdownTimer = setInterval(() => {
+    secondsLeft -= 1;
+    const el = document.getElementById("otp-timer");
+    if (el) el.textContent = secondsLeft;
+
+    if (secondsLeft <= 0) {
+      stopOtpCountdown();
+      const countdownEl = document.getElementById("otp-countdown");
+      if (countdownEl) countdownEl.innerHTML = '<i class="fa-regular fa-clock"></i> Code expired.';
+      if (!otpResendUsed) {
+        otpResendBtn.disabled = false;
+        otpResendBtn.classList.add("available");
+      }
+    }
+  }, 1000);
+}
+
+function stopOtpCountdown() {
+  if (otpCountdownTimer !== null) {
+    clearInterval(otpCountdownTimer);
+    otpCountdownTimer = null;
+  }
+}
+
+// ─── Step 1: submit name + email → request OTP ────────────────────────────────
 userForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name  = nameInput.value.trim();
@@ -156,26 +220,34 @@ userForm.addEventListener("submit", async (e) => {
 
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = true;
-  modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
+  modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending code…';
 
   try {
-    const res = await fetch("/start-session/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": getCookie("csrftoken"),
-      },
-      body: JSON.stringify({ name, email }),
+    const res  = await fetch("/request-otp/", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body:    JSON.stringify({ name, email }),
     });
+    const data = await res.json();
 
-    if (res.ok) {
-      const data = await res.json();
-      setToken(data.token);         // persist token to localStorage
-      modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
-      showChatMode(currentFilename);
+    if (data.status === "ok") {
+      otpVerificationId = data.verification_id;
+      otpResendUsed     = false;
+      otpEmailHint.textContent = data.email_hint;
+      // Reset OTP step state
+      otpInput.value = "";
+      otpError.classList.add("hidden");
+      otpSubmitBtn.disabled = false;
+      otpSubmitBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i>Verify & Start Chat';
+      // Rebuild countdown display (may have been altered by prior session)
+      const countdownEl = document.getElementById("otp-countdown");
+      if (countdownEl) countdownEl.innerHTML =
+        '<i class="fa-regular fa-clock"></i> Code expires in <strong id="otp-timer">60</strong>s';
+      showOtpStep(2);
+      startOtpCountdown();
+      otpInput.focus();
     } else {
-      const data = await res.json().catch(() => ({}));
-      modalError.textContent = data.message || "Failed to start session. Please try again.";
+      modalError.textContent = data.message || "Failed to send code. Please try again.";
       modalError.classList.remove("hidden");
       modalSubmitBtn.disabled = false;
       modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
@@ -186,6 +258,122 @@ userForm.addEventListener("submit", async (e) => {
     modalSubmitBtn.disabled = false;
     modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
   }
+});
+
+// ─── Step 2: submit OTP code → verify ─────────────────────────────────────────
+otpForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = otpInput.value.trim();
+
+  if (!code || !/^\d{6}$/.test(code)) {
+    otpError.textContent = "Please enter the 6-digit code from your email.";
+    otpError.classList.remove("hidden");
+    return;
+  }
+
+  otpError.classList.add("hidden");
+  otpSubmitBtn.disabled = true;
+  otpSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying…';
+
+  try {
+    const res  = await fetch("/verify-otp/", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body:    JSON.stringify({ verification_id: otpVerificationId, code }),
+    });
+    const data = await res.json();
+
+    if (data.status === "ok") {
+      stopOtpCountdown();
+      setToken(data.token);
+      showChatMode(currentFilename);
+    } else {
+      otpError.textContent = data.message || "Verification failed. Please try again.";
+      otpError.classList.remove("hidden");
+      otpSubmitBtn.disabled = false;
+      otpSubmitBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i>Verify & Start Chat';
+      // If expired, disable submit and let user resend or go back
+      if (data.code === "expired") {
+        otpSubmitBtn.disabled = true;
+      }
+    }
+  } catch (_) {
+    otpError.textContent = "Network error. Please try again.";
+    otpError.classList.remove("hidden");
+    otpSubmitBtn.disabled = false;
+    otpSubmitBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i>Verify & Start Chat';
+  }
+});
+
+// ─── Resend button ────────────────────────────────────────────────────────────
+otpResendBtn.addEventListener("click", async () => {
+  if (!otpVerificationId || otpResendUsed) return;
+
+  otpResendBtn.disabled = true;
+  otpResendBtn.classList.remove("available");
+  otpResendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…';
+  otpError.classList.add("hidden");
+
+  try {
+    const res  = await fetch("/resend-otp/", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body:    JSON.stringify({ verification_id: otpVerificationId }),
+    });
+    const data = await res.json();
+
+    if (data.status === "ok") {
+      otpResendUsed = true;
+      // Rebuild countdown for fresh 60 seconds
+      const countdownEl = document.getElementById("otp-countdown");
+      if (countdownEl) countdownEl.innerHTML =
+        '<i class="fa-regular fa-clock"></i> Code expires in <strong id="otp-timer">60</strong>s';
+      otpInput.value = "";
+      otpSubmitBtn.disabled = false;
+      otpSubmitBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i>Verify & Start Chat';
+      otpResendBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Resend code';
+      startOtpCountdown();
+      otpInput.focus();
+    } else {
+      otpError.textContent = data.message || "Failed to resend. Please start again.";
+      otpError.classList.remove("hidden");
+      otpResendBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Resend code';
+    }
+  } catch (_) {
+    otpError.textContent = "Network error. Please try again.";
+    otpError.classList.remove("hidden");
+    otpResendBtn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Resend code';
+    otpResendBtn.disabled = false;
+  }
+});
+
+// ─── Back button: return to step 1 ───────────────────────────────────────────
+otpBackBtn.addEventListener("click", () => {
+  stopOtpCountdown();
+  otpVerificationId = null;
+  otpResendUsed     = false;
+  showOtpStep(1);
+  modalError.classList.add("hidden");
+  modalSubmitBtn.disabled = false;
+  modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+  nameInput.focus();
+});
+
+// ─── Modal close (×) button ───────────────────────────────────────────────────
+modalCloseBtn.addEventListener("click", () => {
+  stopOtpCountdown();
+  userModal.classList.add("hidden");
+  if (currentFilename) {
+    chatSection.classList.remove("hidden");
+    resetBtn.classList.remove("hidden");
+    docIndicatorTxt.textContent = currentFilename;
+    docIndicator.classList.add("loaded");
+  }
+});
+
+// ─── OTP input: digits only ───────────────────────────────────────────────────
+otpInput.addEventListener("input", () => {
+  otpInput.value = otpInput.value.replace(/\D/g, "").slice(0, 6);
 });
 
 // ─── Reset (end session → clear token → show modal for new session) ───────────

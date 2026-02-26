@@ -12,7 +12,7 @@
   <!-- Google Fonts – Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/css/style.css?v=2">
+  <link rel="stylesheet" href="/static/css/style.css?v=4">
 </head>
 <body>
 
@@ -82,12 +82,17 @@
 
       <!-- Branded header strip -->
       <div class="um-accent-bar">
-        <i class="fa-solid fa-file-lines"></i>
-        <span>DocChat</span>
+        <div class="um-accent-brand">
+          <i class="fa-solid fa-file-lines"></i>
+          <span>DocChat</span>
+        </div>
+        <button id="modal-close-btn" class="um-close-btn" type="button" title="Close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
       </div>
 
-      <!-- Form body -->
-      <div class="um-body">
+      <!-- ── STEP 1: Name + Email ── -->
+      <div class="um-body" id="um-step-1">
         <h2 class="um-title" id="um-title">Start a new chat</h2>
         <p class="um-subtitle">Please enter your details to continue.</p>
 
@@ -113,6 +118,56 @@
         </form>
       </div>
 
+      <!-- ── STEP 2: OTP Entry ── -->
+      <div class="um-body hidden" id="um-step-2">
+        <h2 class="um-title">Check your email</h2>
+        <p class="um-subtitle">
+          We sent a 6-digit code to <strong id="otp-email-hint"></strong>.
+          Enter it below within 1 minute.
+        </p>
+
+        <form id="otp-form" novalidate>
+          <div class="um-field">
+            <label for="otp-input">Verification Code</label>
+            <div class="um-input-wrap">
+              <i class="fa-solid fa-shield-halved um-input-icon"></i>
+              <input
+                type="text"
+                id="otp-input"
+                class="otp-input"
+                placeholder="000000"
+                maxlength="6"
+                inputmode="numeric"
+                pattern="[0-9]{6}"
+                autocomplete="one-time-code"
+                required
+              >
+            </div>
+          </div>
+
+          <p id="otp-error" class="um-error hidden"></p>
+
+          <!-- Countdown + resend row -->
+          <div class="otp-meta-row">
+            <span class="otp-countdown" id="otp-countdown">
+              <i class="fa-regular fa-clock"></i>
+              Code expires in <strong id="otp-timer">60</strong>s
+            </span>
+            <button type="button" id="otp-resend-btn" class="otp-resend-btn" disabled>
+              <i class="fa-solid fa-rotate-right"></i> Resend code
+            </button>
+          </div>
+
+          <button type="submit" id="otp-submit-btn" class="um-submit">
+            <i class="fa-solid fa-circle-check"></i>Verify &amp; Start Chat
+          </button>
+        </form>
+
+        <button type="button" id="otp-back-btn" class="otp-back-btn">
+          <i class="fa-solid fa-arrow-left"></i> Use a different email
+        </button>
+      </div>
+
     </div>
   </div>
 
@@ -121,6 +176,6 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
   <!-- Bootstrap JS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
-  <script src="/static/js/main.js?v=5"></script>
+  <script src="/static/js/main.js?v=7"></script>
 </body>
 </html>

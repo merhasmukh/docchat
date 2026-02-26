@@ -1,4 +1,8 @@
+import datetime as _dt
+import secrets as _secrets
+
 from django.db import models
+from django.utils import timezone as _tz
 
 
 # ── Pricing ────────────────────────────────────────────────────────────────────
@@ -189,3 +193,42 @@ class LLMConfig(models.Model):
         """Return the singleton config, creating defaults if none exists."""
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+# ── Email OTP Verification ─────────────────────────────────────────────────────
+
+class EmailVerification(models.Model):
+    """
+    Temporary record holding a one-time 6-digit code sent to the user's email.
+    Created by /request-otp/, consumed by /verify-otp/.
+    A single resend is allowed (resend_count max 1).
+    """
+    email        = models.EmailField(db_index=True)
+    name         = models.CharField(max_length=200)
+    code         = models.CharField(max_length=6)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    expires_at   = models.DateTimeField()
+    is_verified  = models.BooleanField(default=False)
+    resend_count = models.IntegerField(default=0)
+
+    class Meta:
+        verbose_name        = "Email Verification"
+        verbose_name_plural = "Email Verifications"
+        ordering            = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.email} | {self.code} | verified={self.is_verified}"
+
+    @classmethod
+    def generate_code(cls):
+        """Return a cryptographically random 6-digit string (100000–999999)."""
+        return str(_secrets.randbelow(900_000) + 100_000)
+
+    @property
+    def is_expired(self):
+        return _tz.now() >= self.expires_at
+
+    def refresh_code(self):
+        """Generate a new code and reset the 1-minute expiry. Call save() after."""
+        self.code       = self.generate_code()
+        self.expires_at = _tz.now() + _dt.timedelta(minutes=1)

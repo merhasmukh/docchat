@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 
+from django.conf import settings
 from django.http import StreamingHttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -85,39 +86,187 @@ def history_view(request):
     return Response({"messages": messages})
 
 
-# ── Start session (name + email gate) ─────────────────────────────────────────
+# ── Email OTP helpers ──────────────────────────────────────────────────────────
+
+def _send_verification_email(email, name, code):
+    """Send the 6-digit OTP to the user via Gmail SMTP."""
+    from django.core.mail import EmailMultiAlternatives
+    from django.template.loader import get_template
+
+    html_body = get_template("emails/verification_code.html").render({"name": name, "code": code})
+    text_body = (
+        f"Hi {name},\n\n"
+        f"Your DocChat verification code is: {code}\n\n"
+        f"This code expires in 1 minute.\n\n"
+        f"If you did not request this, please ignore this email."
+    )
+    msg = EmailMultiAlternatives(
+        subject="Your DocChat verification code",
+        body=text_body,
+        to=[email],
+    )
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+
+
+# ── Request OTP ────────────────────────────────────────────────────────────────
 @api_view(["POST"])
-def start_session_view(request):
+def request_otp_view(request):
     """
-    Create a new ChatSession tied to the user's name and email.
-    Returns a session token the frontend stores in localStorage.
-    No Django session writes.
+    Step 1: accept {name, email}, send a 6-digit code, return {status, verification_id, email_hint}.
+    Cleans up stale records for the same email before creating a new one.
     """
-    name  = (request.data.get("name") or "").strip()
-    email = (request.data.get("email") or "").strip()
+    import datetime
+    from django.utils import timezone
+    from .models import EmailVerification
+
+    name  = (request.data.get("name")  or "").strip()
+    email = (request.data.get("email") or "").strip().lower()
 
     if not name:
         return Response({"status": "error", "message": "Name is required."}, status=400)
     if not email:
         return Response({"status": "error", "message": "Email is required."}, status=400)
 
-    from .models import Document, ChatSession
+    # Clean up expired and already-verified records for this email
+    EmailVerification.objects.filter(email=email, expires_at__lt=timezone.now()).delete()
+    EmailVerification.objects.filter(email=email, is_verified=True).delete()
 
-    doc         = Document.get_active()
-    token       = str(uuid.uuid4())
+    # Reuse an existing valid pending record (e.g. user resubmits the form)
+    existing = EmailVerification.objects.filter(
+        email=email, is_verified=False, expires_at__gt=timezone.now()
+    ).first()
+
+    if existing:
+        existing.name = name
+        existing.save(update_fields=["name"])
+        verification = existing
+    else:
+        verification = EmailVerification.objects.create(
+            email      = email,
+            name       = name,
+            code       = EmailVerification.generate_code(),
+            expires_at = timezone.now() + datetime.timedelta(minutes=1),
+        )
+
+    try:
+        _send_verification_email(email, name, verification.code)
+    except Exception as exc:
+        logger.error("OTP email send failed | email=%s | error=%s", email, exc, exc_info=True)
+        verification.delete()
+        return Response(
+            {"status": "error", "message": "Failed to send verification email. Please try again."},
+            status=500,
+        )
+
+    # Mask the email for display: j***@gmail.com
+    local, _, domain = email.partition("@")
+    email_hint = local[0] + "***@" + domain
+
+    logger.info("OTP sent | email=%s | pk=%d", email, verification.pk)
+    return Response({"status": "ok", "verification_id": verification.pk, "email_hint": email_hint})
+
+
+# ── Verify OTP ─────────────────────────────────────────────────────────────────
+@api_view(["POST"])
+def verify_otp_view(request):
+    """
+    Step 2: accept {verification_id, code}. On success, create ChatSession and return token.
+    """
+    from .models import EmailVerification, ChatSession, Document
+
+    verification_id = request.data.get("verification_id")
+    code            = (request.data.get("code") or "").strip()
+
+    if not verification_id:
+        return Response({"status": "error", "message": "Missing verification ID."}, status=400)
+    if not code:
+        return Response({"status": "error", "message": "Please enter the verification code."}, status=400)
+
+    try:
+        verification = EmailVerification.objects.get(pk=verification_id, is_verified=False)
+    except EmailVerification.DoesNotExist:
+        return Response(
+            {"status": "error", "message": "Invalid or already used verification. Please start again."},
+            status=400,
+        )
+
+    if verification.is_expired:
+        verification.delete()
+        return Response(
+            {"status": "error", "code": "expired", "message": "Code has expired. Please request a new one."},
+            status=400,
+        )
+
+    if verification.code != code:
+        return Response(
+            {"status": "error", "message": "Incorrect code. Please check and try again."},
+            status=400,
+        )
+
+    # Mark verified
+    verification.is_verified = True
+    verification.save(update_fields=["is_verified"])
+
+    # Create ChatSession (same logic as the old start_session_view)
+    doc   = Document.get_active()
+    token = str(uuid.uuid4())
     session_obj = ChatSession.objects.create(
-        session_key=token,
-        user_name=name,
-        user_email=email,
-        document_name=doc.original_filename if doc else "",
+        session_key   = token,
+        user_name     = verification.name,
+        user_email    = verification.email,
+        document_name = doc.original_filename if doc else "",
     )
 
     logger.info(
-        "New session | pk=%d | name=%s | email=%s | doc=%s",
-        session_obj.pk, name, email, doc.original_filename if doc else "—",
+        "OTP verified, session created | pk=%d | name=%s | email=%s | doc=%s",
+        session_obj.pk, verification.name, verification.email,
+        doc.original_filename if doc else "—",
     )
-    # Return the token — frontend saves it to localStorage
     return Response({"status": "ok", "token": token})
+
+
+# ── Resend OTP ─────────────────────────────────────────────────────────────────
+@api_view(["POST"])
+def resend_otp_view(request):
+    """
+    Accept {verification_id}. Regenerate code + reset 1-minute expiry. Only one resend allowed.
+    """
+    from .models import EmailVerification
+
+    verification_id = request.data.get("verification_id")
+    if not verification_id:
+        return Response({"status": "error", "message": "Missing verification ID."}, status=400)
+
+    try:
+        verification = EmailVerification.objects.get(pk=verification_id, is_verified=False)
+    except EmailVerification.DoesNotExist:
+        return Response(
+            {"status": "error", "message": "Invalid verification session. Please start again."},
+            status=400,
+        )
+
+    if verification.resend_count >= 1:
+        return Response(
+            {"status": "error", "message": "You have already used your one resend. Please start again."},
+            status=400,
+        )
+
+    verification.refresh_code()
+    verification.resend_count += 1
+    verification.save(update_fields=["code", "expires_at", "resend_count"])
+
+    try:
+        _send_verification_email(verification.email, verification.name, verification.code)
+    except Exception as exc:
+        logger.error("OTP resend failed | pk=%d | error=%s", verification.pk, exc, exc_info=True)
+        return Response(
+            {"status": "error", "message": "Failed to resend email. Please try again."},
+            status=500,
+        )
+
+    logger.info("OTP resent | pk=%d | email=%s", verification.pk, verification.email)
+    return Response({"status": "ok"})
 
 
 # ── Chat (SSE streaming) ───────────────────────────────────────────────────────
@@ -181,6 +330,34 @@ def chat_view(request):
     cfg_active    = LLMConfig.get_active()
     rag_embedding = cfg_active.rag_embedding
 
+    # ── Lazy Gemini cache creation ──────────────────────────────────────────────
+    # If provider is now Gemini, document is in full-context mode, but no cache
+    # exists yet (e.g. document was uploaded while a different provider was active),
+    # create the cache now and persist it so every subsequent request reuses it.
+    if (
+        cfg_active.provider == "gemini"
+        and context_mode == "full"
+        and not gemini_cache_name
+        and md_path
+        and os.path.exists(md_path)
+        and settings.GEMINI_API_KEY
+    ):
+        try:
+            from .pipeline import create_gemini_cache as _create_cache
+            with open(md_path, "r", encoding="utf-8") as _f:
+                _md_text = _f.read()
+            _cache_name = _create_cache(_md_text, cfg_active.gemini_model)
+            if _cache_name:
+                Document.objects.filter(pk=doc.pk).update(gemini_cache_name=_cache_name)
+                gemini_cache_name = _cache_name
+                logger.info(
+                    "Lazy Gemini cache created | doc_pk=%d | name=%s | model=%s",
+                    doc.pk, _cache_name, cfg_active.gemini_model,
+                )
+        except Exception as _exc:
+            logger.warning("Lazy Gemini cache creation failed | doc_pk=%d | error=%s", doc.pk, _exc)
+    # ───────────────────────────────────────────────────────────────────────────
+
     has_chunks = bool(rag_chunks_path and os.path.exists(rag_chunks_path))
 
     if context_mode == "rag" and has_chunks:
@@ -208,6 +385,8 @@ def chat_view(request):
             markdown_text = f.read()
 
     def generate():
+        from .providers.gemini import GeminiCacheExpiredError
+
         full_response: list[str] = []
         usage_out: dict = {}
         t0 = time.perf_counter()
@@ -217,6 +396,29 @@ def chat_view(request):
                 full_response.append(token)
                 safe_token = token.replace("\n", "\\n")
                 yield f"data: {safe_token}\n\n"
+        except GeminiCacheExpiredError:
+            # Cache expired on Google's servers — clear stale name and retry with inline context.
+            # This is fully transparent to the user: no error is shown.
+            logger.warning(
+                "Gemini cache expired | doc_pk=%d | stale_cache=%s | retrying with inline context",
+                doc.pk, gemini_cache_name,
+            )
+            Document.objects.filter(pk=doc.pk).update(gemini_cache_name="")
+            full_response.clear()
+            usage_out.clear()
+            try:
+                for token in ask_streaming(question, history, markdown_text, usage_out=usage_out,
+                                           gemini_cache_name=None):
+                    full_response.append(token)
+                    safe_token = token.replace("\n", "\\n")
+                    yield f"data: {safe_token}\n\n"
+            except Exception as retry_exc:
+                logger.error(
+                    "Chat stream retry error | session_pk=%d | error=%s",
+                    session_obj.pk, retry_exc, exc_info=True,
+                )
+                yield f"data: [ERROR: {str(retry_exc)}]\n\n"
+                return
         except Exception as e:
             logger.error(
                 "Chat stream error | session_pk=%d | error=%s",

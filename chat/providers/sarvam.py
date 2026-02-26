@@ -3,7 +3,7 @@ import time
 
 from django.conf import settings
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversational
+from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversational, strip_citation_phrases
 
 logger = logging.getLogger("chat.pipeline")
 
@@ -31,13 +31,22 @@ _DOCUMENT_SYSTEM_PROMPT = (
     f'   "{NOT_FOUND_REPLY}"\n'
     "   Stop there. Do NOT add any additional information after this sentence.\n"
     "5. Never guess, assume, or infer details that are not stated in the document.\n"
-    "6. Answer directly and naturally. NEVER say phrases like 'the document states', "
-    "'according to the document', 'based on the context', 'the context mentions', "
-    "'as per the document', or any similar phrase. Just give the answer.\n\n"
+    "6. CRITICAL — reply as if you already know the answer from memory. "
+    "NEVER start your reply with or include ANY of these phrases (or any variation of them):\n"
+    "   - 'the document states', 'the document says', 'the document mentions'\n"
+    "   - 'the document context states', 'the document context clearly states'\n"
+    "   - 'according to the document', 'as per the document'\n"
+    "   - 'based on the document', 'based on the context', 'based on the provided context'\n"
+    "   - 'the context states', 'the context mentions', 'the context shows'\n"
+    "   - 'from the document', 'from the context', 'as mentioned in the document'\n"
+    "   - 'the provided document', 'the provided context'\n"
+    "   Just state the answer directly. Example: if asked 'What is the fee?', say '500 rupees.' — "
+    "NOT 'The document states the fee is 500 rupees.'\n\n"
     "## Document Context:\n\n"
     "{markdown_text}\n\n"
     "---\n"
-    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely."
+    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely. "
+    "Do NOT mention the document or context in your answer — just give the answer directly."
 )
 
 
@@ -122,6 +131,8 @@ def _ask_streaming_sarvam(question: str, history: list, markdown_text: str, mode
     if not answer:
         logger.warning("Sarvam returned empty content | question=%r", question)
         answer = "Hello! I'm here and ready to help you with questions about your document."
+    else:
+        answer = strip_citation_phrases(answer)
 
     if usage_out is not None:
         try:
@@ -158,6 +169,8 @@ def _ask_sarvam(question: str, history: list, markdown_text: str, model_name: st
     if not answer:
         logger.warning("Sarvam returned empty content | question=%r", question)
         answer = "Hello! I'm here and ready to help you with questions about your document."
+    else:
+        answer = strip_citation_phrases(answer)
     logger.info("LLM done | provider=sarvam | model=%s | response_chars=%d | time=%.2fs",
                 model_name, len(answer), elapsed)
     return answer, elapsed

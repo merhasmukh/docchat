@@ -1,6 +1,67 @@
 """
 Shared utilities used by all LLM providers.
 """
+import re
+
+# ── Citation-phrase scrubber ───────────────────────────────────────────────────
+# Matches phrases the model inserts despite being told not to, e.g.
+#   "The document context clearly states:"
+#   "explicitly mentioned in the document context as"
+#   "According to the document,"
+# Works both at sentence starts AND inline ("… are explicitly mentioned in the
+# document context as …").
+
+_CITATION_RE = re.compile(
+    r"(?i)"
+    r"(?:"
+    # inline: "are/is [clearly] mentioned/stated in the document [context] as/:"
+    r"(?:(?:are|is|was|were|has\s+been|have\s+been)\s+)?"
+    r"(?:explicitly|clearly|directly|specifically)\s+"
+    r"(?:mentioned|stated|specified|described|indicated)\s+"
+    r"in\s+the\s+(?:document\s+)?context\s+(?:as\s+|:\s*)?"
+    r"|"
+    # "the document [context] [clearly] states/says/mentions [that] [:]"
+    r"the\s+(?:document\s+)?context\s+(?:clearly\s+|explicitly\s+)?"
+    r"(?:states?|says?|mentions?|indicates?|shows?|notes?|explains?)\s*(?:that\s+)?:?\s*"
+    r"|"
+    r"the\s+document\s+(?:clearly\s+|explicitly\s+)?"
+    r"(?:states?|says?|mentions?|indicates?|shows?|notes?|explains?)\s*(?:that\s+)?:?\s*"
+    r"|"
+    # "according to the document/context [,]"
+    r"according\s+to\s+(?:the\s+)?(?:document|context)\s*,?\s*"
+    r"|"
+    # "based on the [document/context/provided context] [,]"
+    r"based\s+on\s+(?:the\s+)?(?:provided\s+)?(?:document|context)\s*,?\s*"
+    r"|"
+    # "as per the document/context"
+    r"as\s+per\s+(?:the\s+)?(?:document|context)\s*,?\s*"
+    r"|"
+    # "from the document/context [,]"
+    r"from\s+the\s+(?:provided\s+)?(?:document|context)\s*,?\s*"
+    r"|"
+    # "as mentioned/stated in the document/context [,]"
+    r"as\s+(?:mentioned|stated|described|specified)\s+in\s+the\s+"
+    r"(?:document|context)\s*,?\s*"
+    r")"
+)
+
+# After stripping a citation phrase, fix "are  10.05" → "are 10.05"
+_MULTI_SPACE_RE = re.compile(r"  +")
+
+
+def strip_citation_phrases(text: str) -> str:
+    """
+    Remove 'the document states' / 'explicitly mentioned in the document context as'
+    style phrases that models insert despite instructions.
+    Capitalises the first character of the result if needed.
+    """
+    cleaned = _CITATION_RE.sub(" ", text)
+    cleaned = _MULTI_SPACE_RE.sub(" ", cleaned).strip()
+    # Re-capitalise if the first letter became lowercase after stripping
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned
+
 
 # ── Conversational message detection ──────────────────────────────────────────
 

@@ -7,7 +7,7 @@ from django import forms
 from django.contrib import admin
 from django.conf import settings
 
-from .models import Document, LLMConfig, ModelPricing, ChatSession, ChatMessage
+from .models import Document, LLMConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification
 
 
 # ── Document (admin-managed) ───────────────────────────────────────────────────
@@ -232,6 +232,20 @@ class ModelPricingAdmin(admin.ModelAdmin):
     list_editable = ("is_active",)
     list_filter   = ("provider", "is_active")
     ordering      = ("provider", "model_name")
+
+
+# ── Email OTP Verification ─────────────────────────────────────────────────────
+
+@admin.register(EmailVerification)
+class EmailVerificationAdmin(admin.ModelAdmin):
+    list_display    = ("email", "name", "code", "created_at", "expires_at", "is_verified", "resend_count")
+    list_filter     = ("is_verified",)
+    search_fields   = ("email", "name")
+    readonly_fields = ("email", "name", "code", "created_at", "expires_at", "is_verified", "resend_count")
+    ordering        = ["-created_at"]
+
+    def has_add_permission(self, request):
+        return False
 
 
 # ── Chat Session & Messages ────────────────────────────────────────────────────
