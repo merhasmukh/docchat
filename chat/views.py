@@ -320,8 +320,6 @@ def chat_view(request):
         len(history) // 2, doc.original_filename, doc.context_mode,
     )
 
-    context_mode      = doc.context_mode
-    gemini_cache_name = doc.gemini_cache_name or None
     rag_chunks_path   = doc.rag_chunks_path
     md_path           = doc.markdown_path
 
@@ -329,6 +327,10 @@ def chat_view(request):
     from .providers.utils import is_conversational as _is_conversational
     cfg_active    = LLMConfig.get_active()
     rag_embedding = cfg_active.rag_embedding
+    # "auto" defers to the mode computed at document upload time
+    context_mode = doc.context_mode if cfg_active.context_mode == "auto" else cfg_active.context_mode
+    # Respect cache toggle: treat as uncached when disabled
+    gemini_cache_name = (doc.gemini_cache_name or None) if cfg_active.use_gemini_cache else None
 
     # ── Lazy Gemini cache creation ──────────────────────────────────────────────
     # If provider is now Gemini, document is in full-context mode, but no cache
@@ -337,6 +339,7 @@ def chat_view(request):
     if (
         cfg_active.provider == "gemini"
         and context_mode == "full"
+        and cfg_active.use_gemini_cache
         and not gemini_cache_name
         and md_path
         and os.path.exists(md_path)
@@ -375,7 +378,7 @@ def chat_view(request):
                 markdown_text = full_text
             elif has_chunks:
                 markdown_text = retrieve_relevant_context(
-                    question, rag_chunks_path, rag_embedding, top_k=5
+                    question, rag_chunks_path, rag_embedding, top_k=3
                 )
             else:
                 markdown_text = full_text[:_SARVAM_BUDGET]
@@ -397,18 +400,32 @@ def chat_view(request):
                 safe_token = token.replace("\n", "\\n")
                 yield f"data: {safe_token}\n\n"
         except GeminiCacheExpiredError:
-            # Cache expired on Google's servers — clear stale name and retry with inline context.
+            # Cache invalid (expired or model mismatch) — clear stale name, recache, then retry.
             # This is fully transparent to the user: no error is shown.
             logger.warning(
-                "Gemini cache expired | doc_pk=%d | stale_cache=%s | retrying with inline context",
-                doc.pk, gemini_cache_name,
+                "Gemini cache invalid | doc_pk=%d | stale_cache=%s | recaching with current model=%s",
+                doc.pk, gemini_cache_name, cfg_active.gemini_model,
             )
             Document.objects.filter(pk=doc.pk).update(gemini_cache_name="")
             full_response.clear()
             usage_out.clear()
+            # Attempt to create a fresh cache with the currently configured model.
+            new_cache_name = None
+            if md_path and os.path.exists(md_path) and settings.GEMINI_API_KEY:
+                try:
+                    from .pipeline import create_gemini_cache as _create_cache
+                    new_cache_name = _create_cache(markdown_text, cfg_active.gemini_model)
+                    if new_cache_name:
+                        Document.objects.filter(pk=doc.pk).update(gemini_cache_name=new_cache_name)
+                        logger.info(
+                            "Gemini recache succeeded | doc_pk=%d | new_cache=%s | model=%s",
+                            doc.pk, new_cache_name, cfg_active.gemini_model,
+                        )
+                except Exception as _cache_exc:
+                    logger.warning("Gemini recache failed | doc_pk=%d | error=%s", doc.pk, _cache_exc)
             try:
                 for token in ask_streaming(question, history, markdown_text, usage_out=usage_out,
-                                           gemini_cache_name=None):
+                                           gemini_cache_name=new_cache_name):
                     full_response.append(token)
                     safe_token = token.replace("\n", "\\n")
                     yield f"data: {safe_token}\n\n"
@@ -437,7 +454,7 @@ def chat_view(request):
         # ── Save cost record and message to DB ────────────────────────────────
         try:
             from decimal import Decimal
-            from django.db.models import F
+            from django.db.models import DecimalField, ExpressionWrapper, F, FloatField
             from .models import ModelPricing
 
             cfg      = LLMConfig.get_active()
@@ -449,23 +466,39 @@ def chat_view(request):
             else:
                 model = cfg.ollama_model
 
-            input_tokens  = usage_out.get("input_tokens", 0)
-            output_tokens = usage_out.get("output_tokens", 0)
-            total_tokens  = input_tokens + output_tokens
-            estimated     = usage_out.get("estimated", False)
+            input_tokens         = usage_out.get("input_tokens", 0)
+            output_tokens        = usage_out.get("output_tokens", 0)
+            cached_input_tokens  = usage_out.get("cached_input_tokens", 0)
+            non_cached_input     = input_tokens - cached_input_tokens
+            total_tokens         = input_tokens + output_tokens
+            estimated            = usage_out.get("estimated", False)
 
             try:
-                pricing     = ModelPricing.objects.get(provider=provider, model_name=model, is_active=True)
-                input_cost  = Decimal(input_tokens)  * pricing.input_price_per_million  / Decimal(1_000_000)
-                output_cost = Decimal(output_tokens) * pricing.output_price_per_million / Decimal(1_000_000)
+                pricing = ModelPricing.objects.get(provider=provider, model_name=model, is_active=True)
+                # Non-cached input at standard rate
+                input_cost  = Decimal(non_cached_input) * pricing.input_price_per_million  / Decimal(1_000_000)
+                output_cost = Decimal(output_tokens)    * pricing.output_price_per_million / Decimal(1_000_000)
+                # Cached tokens: read rate (cheaper)
+                cache_read_cost = (
+                    Decimal(cached_input_tokens) * pricing.cache_read_price_per_million / Decimal(1_000_000)
+                    if cached_input_tokens and pricing.cache_read_price_per_million
+                    else Decimal(0)
+                )
+                # Storage: 1-hour approximation per message that uses the cache
+                cache_storage_cost = (
+                    Decimal(cached_input_tokens) * pricing.cache_storage_price_per_million_per_hour / Decimal(1_000_000)
+                    if cached_input_tokens and pricing.cache_storage_price_per_million_per_hour
+                    else Decimal(0)
+                )
             except ModelPricing.DoesNotExist:
-                input_cost = output_cost = Decimal(0)
-            total_cost = input_cost + output_cost
+                input_cost = output_cost = cache_read_cost = cache_storage_cost = Decimal(0)
+            total_cost = input_cost + output_cost + cache_read_cost + cache_storage_cost
 
             logger.info(
-                "Cost | session_pk=%d | provider=%s | model=%s | in=%d out=%d est=%s | cost=₹%.6f",
+                "Cost | session_pk=%d | provider=%s | model=%s | in=%d cached=%d out=%d est=%s | cost=₹%.6f (cache_read=₹%.6f storage=₹%.6f)",
                 session_obj.pk, provider, model,
-                input_tokens, output_tokens, estimated, total_cost,
+                input_tokens, cached_input_tokens, output_tokens, estimated,
+                total_cost, cache_read_cost, cache_storage_cost,
             )
 
             ChatMessage.objects.create(
@@ -478,19 +511,33 @@ def chat_view(request):
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
                 tokens_estimated=estimated,
+                cached_input_tokens=cached_input_tokens,
                 input_cost=input_cost,
                 output_cost=output_cost,
+                cache_read_cost=cache_read_cost,
+                cache_storage_cost=cache_storage_cost,
                 total_cost=total_cost,
                 response_time_seconds=elapsed,
             )
 
             ChatSession.objects.filter(pk=session_obj.pk).update(
-                total_input_tokens =F("total_input_tokens")  + input_tokens,
-                total_output_tokens=F("total_output_tokens") + output_tokens,
-                total_tokens       =F("total_tokens")        + total_tokens,
-                total_cost         =F("total_cost")          + total_cost,
-                message_count      =F("message_count")       + 1,
-                document_name      =doc.original_filename,
+                total_input_tokens         =F("total_input_tokens")          + input_tokens,
+                total_output_tokens        =F("total_output_tokens")         + output_tokens,
+                total_tokens               =F("total_tokens")                + total_tokens,
+                total_cached_input_tokens  =F("total_cached_input_tokens")   + cached_input_tokens,
+                total_cost                 =F("total_cost")                  + total_cost,
+                total_cache_read_cost      =F("total_cache_read_cost")       + cache_read_cost,
+                total_cache_storage_cost   =F("total_cache_storage_cost")    + cache_storage_cost,
+                message_count              =F("message_count")               + 1,
+                document_name             =doc.original_filename,
+                avg_tokens_per_message=ExpressionWrapper(
+                    (F("total_tokens") + total_tokens) / (F("message_count") + 1),
+                    output_field=FloatField(),
+                ),
+                avg_cost_per_message  =ExpressionWrapper(
+                    (F("total_cost") + total_cost) / (F("message_count") + 1),
+                    output_field=DecimalField(max_digits=14, decimal_places=6),
+                ),
             )
             logger.info("DB save OK | session_pk=%d | q_chars=%d", session_obj.pk, len(question))
         except Exception as db_exc:

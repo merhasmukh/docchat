@@ -78,6 +78,9 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         if change:
+            if obj.is_active:
+                # Ensure only this document is active before saving.
+                Document.objects.exclude(pk=obj.pk).filter(is_active=True).update(is_active=False)
             super().save_model(request, obj, form, change)
             return
 
@@ -214,7 +217,7 @@ class DocumentAdmin(admin.ModelAdmin):
 
 @admin.register(LLMConfig)
 class LLMConfigAdmin(admin.ModelAdmin):
-    list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding")
+    list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding", "context_mode", "use_gemini_cache")
 
     def has_add_permission(self, request):
         return not LLMConfig.objects.exists()
@@ -228,7 +231,10 @@ class LLMConfigAdmin(admin.ModelAdmin):
 @admin.register(ModelPricing)
 class ModelPricingAdmin(admin.ModelAdmin):
     list_display  = ("provider", "model_name", "input_price_per_million",
-                     "output_price_per_million", "is_active", "updated_at")
+                     "output_price_per_million",
+                     "cache_read_price_per_million",
+                     "cache_storage_price_per_million_per_hour",
+                     "is_active", "updated_at")
     list_editable = ("is_active",)
     list_filter   = ("provider", "is_active")
     ordering      = ("provider", "model_name")
@@ -258,8 +264,8 @@ class ChatMessageInline(admin.TabularInline):
     readonly_fields = (
         "created_at", "provider", "model_name",
         "question", "answer",
-        "input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
-        "input_cost", "output_cost", "total_cost",
+        "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
+        "input_cost", "output_cost", "cache_read_cost", "cache_storage_cost", "total_cost",
         "response_time_seconds",
     )
 
@@ -271,8 +277,10 @@ class ChatMessageInline(admin.TabularInline):
 class ChatSessionAdmin(admin.ModelAdmin):
     list_display   = (
         "user_name", "user_email", "document_name", "message_count",
-        "total_input_tokens", "total_output_tokens",
-        "total_tokens", "total_cost_inr", "started_at", "last_activity",
+        "total_input_tokens", "total_output_tokens", "total_cached_input_tokens",
+        "total_tokens", "avg_tokens_per_message",
+        "total_cost_inr", "total_cache_read_cost_inr", "total_cache_storage_cost_inr",
+        "avg_cost_per_message_inr", "started_at", "last_activity",
     )
     search_fields  = ("user_name", "user_email", "document_name")
     readonly_fields = (
@@ -280,7 +288,10 @@ class ChatSessionAdmin(admin.ModelAdmin):
         "started_at", "last_activity",
         "message_count",
         "total_input_tokens", "total_output_tokens", "total_tokens",
-        "total_cost",
+        "total_cached_input_tokens",
+        "avg_tokens_per_message",
+        "total_cost", "total_cache_read_cost", "total_cache_storage_cost",
+        "avg_cost_per_message",
     )
     inlines  = [ChatMessageInline]
     ordering = ["-last_activity"]
@@ -292,12 +303,24 @@ class ChatSessionAdmin(admin.ModelAdmin):
     def total_cost_inr(self, obj):
         return f"₹{obj.total_cost:.4f}"
 
+    @admin.display(description="Cache Read Cost (₹)")
+    def total_cache_read_cost_inr(self, obj):
+        return f"₹{obj.total_cache_read_cost:.6f}"
+
+    @admin.display(description="Cache Storage Cost (₹)")
+    def total_cache_storage_cost_inr(self, obj):
+        return f"₹{obj.total_cache_storage_cost:.6f}"
+
+    @admin.display(description="Avg Cost/Msg (₹)")
+    def avg_cost_per_message_inr(self, obj):
+        return f"₹{obj.avg_cost_per_message:.6f}"
+
 
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
     list_display  = ("created_at", "session_short", "provider", "model_name",
-                     "input_tokens", "output_tokens", "total_tokens",
-                     "question","answer",
+                     "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens",
+                     "question", "answer",
                      "tokens_estimated", "total_cost_inr", "response_time_seconds")
     list_filter   = ("provider", "model_name", "tokens_estimated")
     search_fields = ("question", "session__session_key", "model_name")
@@ -305,8 +328,8 @@ class ChatMessageAdmin(admin.ModelAdmin):
     readonly_fields = (
         "session", "created_at", "provider", "model_name",
         "question", "answer",
-        "input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
-        "input_cost", "output_cost", "total_cost",
+        "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
+        "input_cost", "output_cost", "cache_read_cost", "cache_storage_cost", "total_cost",
         "response_time_seconds",
     )
 

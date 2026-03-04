@@ -3,7 +3,7 @@ import time
 
 from django.conf import settings
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversational, strip_citation_phrases
+from .utils import CONVERSATIONAL_SYSTEM_PROMPT, DOCUMENT_SYSTEM_PROMPT, is_conversational, strip_citation_phrases
 
 logger = logging.getLogger("chat.pipeline")
 
@@ -19,35 +19,6 @@ logger = logging.getLogger("chat.pipeline")
 # Gujarati / Indic script: ~2–3 chars per token (denser than English's ~4).
 # 9 000 chars ≈ 3 000–4 500 tokens → well within budget even for pure Gujarati docs.
 _MAX_CONTEXT_CHARS = 9_000
-
-_DOCUMENT_SYSTEM_PROMPT = (
-    "You are a document question-answering assistant.\n"
-    "Your ONLY source of information is the document context provided below.\n\n"
-    "STRICT RULES — you must follow all of them:\n"
-    "1. Answer questions ONLY using information explicitly present in the document context.\n"
-    "2. Do NOT use any knowledge from your training data or general world knowledge.\n"
-    "3. Do NOT reference external websites, resources, or any information outside the document.\n"
-    "4. If the answer cannot be found in the document context, respond with exactly:\n"
-    f'   "{NOT_FOUND_REPLY}"\n'
-    "   Stop there. Do NOT add any additional information after this sentence.\n"
-    "5. Never guess, assume, or infer details that are not stated in the document.\n"
-    "6. CRITICAL — reply as if you already know the answer from memory. "
-    "NEVER start your reply with or include ANY of these phrases (or any variation of them):\n"
-    "   - 'the document states', 'the document says', 'the document mentions'\n"
-    "   - 'the document context states', 'the document context clearly states'\n"
-    "   - 'according to the document', 'as per the document'\n"
-    "   - 'based on the document', 'based on the context', 'based on the provided context'\n"
-    "   - 'the context states', 'the context mentions', 'the context shows'\n"
-    "   - 'from the document', 'from the context', 'as mentioned in the document'\n"
-    "   - 'the provided document', 'the provided context'\n"
-    "   Just state the answer directly. Example: if asked 'What is the fee?', say '500 rupees.' — "
-    "NOT 'The document states the fee is 500 rupees.'\n\n"
-    "## Document Context:\n\n"
-    "{markdown_text}\n\n"
-    "---\n"
-    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely. "
-    "Do NOT mention the document or context in your answer — just give the answer directly."
-)
 
 
 def _extract_content(response) -> str:
@@ -99,7 +70,7 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
         "If the answer is not there, say so — do not use outside knowledge.]"
     )
     return (
-        [{"role": "system", "content": _DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
+        [{"role": "system", "content": DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
         + trimmed_history
         + [{"role": "user", "content": constrained_question}]
     )

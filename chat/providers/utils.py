@@ -93,6 +93,45 @@ CONVERSATIONAL_SYSTEM_PROMPT = (
 # Deliberately avoids mentioning "document" or "context" — keeps the UX clean.
 NOT_FOUND_REPLY = "I'm sorry, I don't know the answer to your question."
 
+# ── Document system prompts ────────────────────────────────────────────────────
+
+# Behavioural rules shared by all prompts — no document section.
+_RULES = (
+    "STRICT RULES:\n"
+    "1. Answer ONLY from the document context — no training data or external knowledge.\n"
+    "2. If the answer isn't in the document, reply with exactly:\n"
+    f'   "{NOT_FOUND_REPLY}" — then stop.\n'
+    "3. Never guess, assume, or infer anything not explicitly stated.\n"
+    "4. Reply directly — NEVER reference the source. Banned phrases include any variation of:\n"
+    "   'the document/context states/says/mentions', 'according to/based on/from the document/context/The document states', etc.\n"
+    "   ✓ Say: '500 rupees.'   ✗ Not: 'The document states the fee is 500 rupees.'\n"
+    "5. MULTILINGUAL — Document and questions may be in Gujarati, Hindi, English, or mixed.\n"
+    "   Match concepts across languages (e.g. 'syllabus' = 'અભ્યાસક્રમ').\n"
+    "   Always reply in the proper and correct language the user used."
+)
+
+# Full prompt with document context injected via {markdown_text}.
+# Used by Ollama, Sarvam, and Gemini (non-cached / inline mode).
+DOCUMENT_SYSTEM_PROMPT = (
+    "You are a document question-answering assistant.\n"
+    "Your ONLY source of information is the document context provided below.\n\n"
+    + _RULES
+    + "\n\n"
+    "## Document Context:\n\n"
+    "{markdown_text}\n\n"
+    "---\n"
+    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely. "
+    "Do NOT mention the document or context in your answer — just give the answer directly."
+)
+
+# Rules-only prompt used as Gemini system_instruction when the document is
+# placed in cached `contents` (cache stores the document; this stores the rules).
+DOCUMENT_SYSTEM_INSTRUCTION = (
+    "You are a document question-answering assistant.\n"
+    "Your ONLY source of information is the document context provided in this conversation.\n\n"
+    + _RULES
+)
+
 
 def is_conversational(question: str) -> bool:
     """

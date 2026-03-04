@@ -130,7 +130,7 @@ MARKDOWN_FOLDER = BASE_DIR / "markdown_cache"
 
 # Docs with character count below this threshold use full-context mode
 # (with Gemini context caching). Larger docs fall back to BM25 RAG retrieval.
-CONTEXT_CHAR_THRESHOLD = 100_000   # ~25K tokens
+CONTEXT_CHAR_THRESHOLD = 12_000   # ~3K tokens
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB

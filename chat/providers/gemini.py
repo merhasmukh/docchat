@@ -5,26 +5,18 @@ from django.conf import settings
 from google import genai
 from google.genai import types as genai_types
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversational
+from .utils import (
+    CONVERSATIONAL_SYSTEM_PROMPT,
+    DOCUMENT_SYSTEM_INSTRUCTION,
+    DOCUMENT_SYSTEM_PROMPT,
+    is_conversational,
+)
 
 logger = logging.getLogger("chat.pipeline")
 
 
 class GeminiCacheExpiredError(Exception):
     """Raised when a Gemini cached content is not found or has expired (HTTP 403)."""
-
-_DOCUMENT_SYSTEM_PROMPT = (
-    "You are a helpful assistant. The following is extracted markdown text from a document.\n"
-    "Use ONLY this context to answer the user's questions.\n"
-    "Do NOT use any knowledge from your training data or general world knowledge.\n"
-    f'If the answer cannot be found in the context, respond with exactly: "{NOT_FOUND_REPLY}" '
-    "Stop there — do NOT add any additional information after this sentence.\n"
-    "Answer directly and naturally. NEVER say phrases like 'the document states', "
-    "'according to the document', 'based on the context', 'the context mentions', "
-    "'as per the document', or any similar phrase. Just give the answer.\n\n"
-    "## Document Context (Markdown)\n\n"
-    "{markdown_text}"
-)
 
 
 # ── Context cache ──────────────────────────────────────────────────────────────
@@ -43,16 +35,7 @@ def create_gemini_cache(markdown_text: str, model_name: str) -> str | None:
         cache = client.caches.create(
             model=model_name,
             config=genai_types.CreateCachedContentConfig(
-                system_instruction=(
-                    "You are a helpful assistant. "
-                    "Use ONLY the provided document context to answer the user's questions. "
-                    "Do NOT use your training knowledge. "
-                    f'If the answer cannot be found in the context, respond with exactly: "{NOT_FOUND_REPLY}" '
-                    "Stop there — do NOT add any additional information after this sentence. "
-                    "Answer directly and naturally. NEVER say phrases like 'the document states', "
-                    "'according to the document', 'based on the context', 'the context mentions', "
-                    "'as per the document', or any similar phrase. Just give the answer."
-                ),
+                system_instruction=DOCUMENT_SYSTEM_INSTRUCTION,
                 contents=[
                     genai_types.Content(
                         role="user",
@@ -114,7 +97,7 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     elif cached:
         llm_config = genai_types.GenerateContentConfig(cached_content=cache_name)
     else:
-        system = _DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
+        system = DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
         llm_config = genai_types.GenerateContentConfig(system_instruction=system)
 
     last_chunk = None
@@ -132,8 +115,13 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
             "403" in str(exc)
             or "PERMISSION_DENIED" in str(exc)
             or "CachedContent not found" in str(exc)
+            or (
+                "400" in str(exc)
+                and "INVALID_ARGUMENT" in str(exc)
+                and "CachedContent" in str(exc)
+            )
         ):
-            logger.warning("Gemini cache expired/not found, will retry without cache: %s", exc)
+            logger.warning("Gemini cache invalid (expired or model mismatch), will recache: %s", exc)
             raise GeminiCacheExpiredError(str(exc)) from exc
         if cached:
             logger.warning("Gemini cached stream failed: %s", exc)
@@ -142,8 +130,9 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
         if usage_out is not None and last_chunk is not None:
             meta = getattr(last_chunk, "usage_metadata", None)
             if meta:
-                usage_out["input_tokens"]  = meta.prompt_token_count or 0
-                usage_out["output_tokens"] = meta.candidates_token_count or 0
+                usage_out["input_tokens"]         = meta.prompt_token_count or 0
+                usage_out["output_tokens"]        = meta.candidates_token_count or 0
+                usage_out["cached_input_tokens"]  = getattr(meta, "cached_content_token_count", None) or 0
         logger.info(
             "LLM stream done  | provider=gemini | model=%s | response_chars=%d | time=%.2fs | cached=%s",
             model_name, output_chars, time.perf_counter() - t0, cached,
@@ -156,7 +145,7 @@ def _ask_gemini(question: str, history: list, markdown_text: str, model_name: st
     if is_conversational(question):
         system = CONVERSATIONAL_SYSTEM_PROMPT
     else:
-        system = _DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
+        system = DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
     config = genai_types.GenerateContentConfig(system_instruction=system)
     contents = _build_gemini_contents(question, history)
     t0 = time.perf_counter()

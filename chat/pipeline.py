@@ -32,10 +32,24 @@ def _ocr_page_docling(image_path: str, converter: DocumentConverter) -> str:
     return text
 
 
+_TESSERACT_LANG   = "hin+guj+eng"
+_TESSERACT_CONFIG = "--oem 3 --psm 6"   # LSTM engine, assume uniform block of text
+
+
+def _preprocess_for_tesseract(img: Image.Image) -> Image.Image:
+    """Grayscale + contrast boost → sharper edges for Indic script recognition."""
+    from PIL import ImageEnhance, ImageFilter
+    img = img.convert("L")                          # greyscale
+    img = ImageEnhance.Contrast(img).enhance(2.0)   # punch up contrast
+    img = img.filter(ImageFilter.SHARPEN)           # crisp strokes
+    return img
+
+
 def _ocr_page_tesseract(image_path: str) -> str:
     t0 = time.perf_counter()
     img = Image.open(image_path)
-    text = pytesseract.image_to_string(img, lang="guj+eng")
+    img = _preprocess_for_tesseract(img)
+    text = pytesseract.image_to_string(img, lang=_TESSERACT_LANG, config=_TESSERACT_CONFIG)
     logger.debug("Tesseract OCR: %.2fs, %d chars", time.perf_counter() - t0, len(text))
     return text
 
@@ -49,7 +63,8 @@ def _ocr_page_gemini_vision(image_path: str, client, model_name: str) -> str:
         genai_types.Part(
             text=(
                 "Extract all text from this image exactly as it appears. "
-                "Preserve the original language (Gujarati, English, or mixed). "
+                "Preserve the original language (Hindi, Gujarati, English, or any mix). "
+                "Output Devanagari script for Hindi, Gujarati script for Gujarati. "
                 "Return only the extracted text, no commentary."
             )
         ),
@@ -58,6 +73,20 @@ def _ocr_page_gemini_vision(image_path: str, client, model_name: str) -> str:
     text = response.text or ""
     logger.debug("Gemini Vision OCR (model=%s): %.2fs, %d chars", model_name, time.perf_counter() - t0, len(text))
     return text
+
+
+def _has_text_layer(pdf_path: str, min_chars_per_page: int = 50) -> bool:
+    """Return True when the PDF has a selectable text layer (digital PDF)."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            if not pdf.pages:
+                return False
+            total = sum(len(p.extract_text() or "") for p in pdf.pages)
+            return total >= min_chars_per_page * len(pdf.pages)
+    except Exception as exc:
+        logger.debug("Text-layer detection failed, assuming scanned: %s", exc)
+        return False
 
 
 def convert_to_markdown(input_path: str) -> tuple[str, dict]:
@@ -79,25 +108,39 @@ def convert_to_markdown(input_path: str) -> tuple[str, dict]:
     source_name = Path(input_path).name
     page_entries: list[dict] = []
 
-    logger.info("OCR start | file=%s | engine=%s", source_name, config.ocr_engine)
+    # ── Resolve effective engine (auto mode picks based on content type) ──────
+    effective_engine = config.ocr_engine
+    if config.ocr_engine == "auto":
+        if ext == ".pdf" and _has_text_layer(input_path):
+            effective_engine = "docling"
+            logger.info("Auto OCR: digital text layer detected → Docling")
+        else:
+            effective_engine = "tesseract"
+            logger.info("Auto OCR: scanned/image document detected → Tesseract")
+
+    # Higher DPI for Tesseract — Devanagari/Gujarati strokes need clarity.
+    dpi = 300 if effective_engine == "tesseract" else 200
+
+    logger.info("OCR start | file=%s | engine=%s (config=%s)",
+                source_name, effective_engine, config.ocr_engine)
     ocr_total_start = time.perf_counter()
 
-    converter = DocumentConverter() if config.ocr_engine == "docling" else None
+    converter = DocumentConverter() if effective_engine == "docling" else None
     gemini_client = (
         genai.Client(api_key=settings.GEMINI_API_KEY)
-        if config.ocr_engine == "gemini_vision" else None
+        if effective_engine == "gemini_vision" else None
     )
 
     def _ocr(image_path: str) -> str:
-        if config.ocr_engine == "tesseract":
+        if effective_engine == "tesseract":
             return _ocr_page_tesseract(image_path)
-        elif config.ocr_engine == "gemini_vision":
+        elif effective_engine == "gemini_vision":
             return _ocr_page_gemini_vision(image_path, gemini_client, config.gemini_model)
         else:  # docling (default)
             return _ocr_page_docling(image_path, converter)
 
     if ext == ".pdf":
-        images = convert_from_path(input_path, dpi=200)
+        images = convert_from_path(input_path, dpi=dpi)
         logger.info("PDF rendered to %d page(s)", len(images))
         for page_num, page_img in enumerate(images, start=1):
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -218,7 +261,7 @@ def build_rag_chunks(pages_data: dict, embedding_method: str) -> list[dict]:
 
 
 def retrieve_relevant_context(question: str, chunks_path: str,
-                              embedding_method: str = "bm25", top_k: int = 5) -> str:
+                              embedding_method: str = "bm25", top_k: int = 3) -> str:
     """
     Load chunks from disk and return the top-k most relevant pages.
     """

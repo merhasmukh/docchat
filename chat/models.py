@@ -20,6 +20,14 @@ class ModelPricing(models.Model):
         max_digits=12, decimal_places=4,
         help_text="INR per 1 million output tokens",
     )
+    cache_read_price_per_million = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True,
+        help_text="INR per 1M tokens read from cache (cheaper than standard input). Gemini only.",
+    )
+    cache_storage_price_per_million_per_hour = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True,
+        help_text="INR per 1M cached tokens per hour of storage. Gemini only.",
+    )
     is_active  = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -41,11 +49,16 @@ class ChatSession(models.Model):
     document_name       = models.CharField(max_length=500, blank=True)
     started_at          = models.DateTimeField(auto_now_add=True)
     last_activity       = models.DateTimeField(auto_now=True)
-    message_count       = models.IntegerField(default=0)
-    total_input_tokens  = models.BigIntegerField(default=0)
-    total_output_tokens = models.BigIntegerField(default=0)
-    total_tokens        = models.BigIntegerField(default=0)
-    total_cost          = models.DecimalField(max_digits=14, decimal_places=6, default=0)
+    message_count           = models.IntegerField(default=0)
+    total_input_tokens      = models.BigIntegerField(default=0)
+    total_output_tokens     = models.BigIntegerField(default=0)
+    total_tokens            = models.BigIntegerField(default=0)
+    avg_tokens_per_message           = models.FloatField(default=0)
+    total_cached_input_tokens        = models.BigIntegerField(default=0)
+    total_cost                       = models.DecimalField(max_digits=14, decimal_places=6, default=0)
+    total_cache_read_cost            = models.DecimalField(max_digits=14, decimal_places=6, default=0)
+    total_cache_storage_cost         = models.DecimalField(max_digits=14, decimal_places=6, default=0)
+    avg_cost_per_message             = models.DecimalField(max_digits=14, decimal_places=6, default=0)
 
     class Meta:
         verbose_name = "Chat Session"
@@ -71,8 +84,14 @@ class ChatMessage(models.Model):
         default=False,
         help_text="True when Ollama returned 0 tokens and chars÷4 estimation was used",
     )
+    cached_input_tokens   = models.IntegerField(default=0,
+        help_text="Input tokens served from Gemini context cache.")
     input_cost            = models.DecimalField(max_digits=14, decimal_places=6, default=0)
     output_cost           = models.DecimalField(max_digits=14, decimal_places=6, default=0)
+    cache_read_cost       = models.DecimalField(max_digits=14, decimal_places=6, default=0,
+        help_text="Cost for cached input tokens at cache-read rate.")
+    cache_storage_cost    = models.DecimalField(max_digits=14, decimal_places=6, default=0,
+        help_text="Pro-rated cache storage cost for this message (1 hour approximation).")
     total_cost            = models.DecimalField(max_digits=14, decimal_places=6, default=0)
     response_time_seconds = models.FloatField(default=0)
 
@@ -129,9 +148,10 @@ class LLMConfig(models.Model):
         ("sarvam", "Sarvam AI"),
     ]
     OCR_ENGINE_CHOICES = [
-        ("docling",       "Docling (default)"),
-        ("tesseract",     "Tesseract (local, guj+eng)"),
-        ("gemini_vision", "Gemini Vision (cloud)"),
+        ("auto",          "Auto (Docling for digital PDFs · Tesseract for scanned)"),
+        ("docling",       "Docling (digital PDFs)"),
+        ("tesseract",     "Tesseract (scanned · Hindi + Gujarati + English)"),
+        ("gemini_vision", "Gemini Vision (cloud · best quality for complex scans)"),
     ]
     RAG_EMBEDDING_CHOICES = [
         ("bm25",               "BM25 (keyword — English only, no cross-language)"),
@@ -172,6 +192,29 @@ class LLMConfig(models.Model):
         help_text=(
             "Embedding method for RAG mode (docs exceeding the context threshold). "
             "Multilingual options support Gujarati + English cross-language queries."
+        ),
+    )
+    CONTEXT_MODE_CHOICES = [
+        ("auto", "Auto (use document's computed mode)"),
+        ("full", "Full context (send entire document)"),
+        ("rag",  "RAG (retrieve relevant pages only)"),
+    ]
+    context_mode = models.CharField(
+        max_length=10,
+        choices=CONTEXT_MODE_CHOICES,
+        default="auto",
+        help_text=(
+            "Override the context strategy for all providers. "
+            "'Auto' uses the mode computed at document upload time. "
+            "'Full' sends the entire document (Gemini will use context caching). "
+            "'RAG' retrieves the most relevant pages only."
+        ),
+    )
+    use_gemini_cache = models.BooleanField(
+        default=True,
+        help_text=(
+            "Enable Gemini context caching in full-context mode. "
+            "Disable to send the full document with every request (no cache storage cost)."
         ),
     )
 

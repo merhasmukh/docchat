@@ -3,29 +3,7 @@ import time
 
 import ollama
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, NOT_FOUND_REPLY, is_conversational
-
-logger = logging.getLogger("chat.pipeline")
-
-_DOCUMENT_SYSTEM_PROMPT = (
-    "You are a document question-answering assistant.\n"
-    "Your ONLY source of information is the document context provided below.\n\n"
-    "STRICT RULES — you must follow all of them:\n"
-    "1. Answer questions ONLY using information explicitly present in the document context.\n"
-    "2. Do NOT use any knowledge from your training data or general world knowledge.\n"
-    "3. Do NOT reference external websites, resources, or any information outside the document.\n"
-    "4. If the answer cannot be found in the document context, respond with exactly:\n"
-    f'   "{NOT_FOUND_REPLY}"\n'
-    "   Stop there. Do NOT add any additional information after this sentence.\n"
-    "5. Never guess, assume, or infer details that are not stated in the document.\n"
-    "6. Answer directly and naturally. NEVER say phrases like 'the document states', "
-    "'according to the document', 'based on the context', 'the context mentions', "
-    "'as per the document', or any similar phrase. Just give the answer.\n\n"
-    "## Document Context:\n\n"
-    "{markdown_text}\n\n"
-    "---\n"
-    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely."
-)
+from .utils import CONVERSATIONAL_SYSTEM_PROMPT, DOCUMENT_SYSTEM_PROMPT, is_conversational
 
 
 def _build_messages(question: str, history: list, markdown_text: str) -> list:
@@ -45,7 +23,7 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
         "If the answer is not there, say so — do not use outside knowledge.]"
     )
     return (
-        [{"role": "system", "content": _DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
+        [{"role": "system", "content": DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
         + trimmed_history
         + [{"role": "user", "content": constrained_question}]
     )
