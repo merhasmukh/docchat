@@ -8,9 +8,18 @@ from django.conf import settings
 from django.http import StreamingHttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.clickjacking import xframe_options_exempt
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+
+from drf_spectacular.utils import (
+    extend_schema, extend_schema_view,
+    OpenApiParameter, OpenApiResponse, OpenApiExample,
+    inline_serializer,
+)
+from drf_spectacular.types import OpenApiTypes
+import rest_framework.serializers as s
 
 from .pipeline import ask_streaming, retrieve_relevant_context
 
@@ -35,6 +44,7 @@ def _get_chat_session(request):
 
 
 # ── Index ──────────────────────────────────────────────────────────────────────
+@extend_schema(exclude=True)
 @ensure_csrf_cookie
 def index(request):
     """Serve the single-page chat UI and set the CSRF cookie."""
@@ -42,6 +52,26 @@ def index(request):
 
 
 # ── Status ─────────────────────────────────────────────────────────────────────
+_CHAT_TOKEN_HEADER = OpenApiParameter(
+    name="X-Chat-Token",
+    location=OpenApiParameter.HEADER,
+    description="Session token obtained from `POST /verify-otp/`.",
+    required=False,
+    type=OpenApiTypes.UUID,
+)
+
+@extend_schema(
+    tags=["session"],
+    summary="Document and session status",
+    description="Returns the active document info and whether the X-Chat-Token is valid.",
+    parameters=[_CHAT_TOKEN_HEADER],
+    responses={200: inline_serializer("StatusResponse", fields={
+        "document_loaded": s.BooleanField(),
+        "filename":        s.CharField(allow_null=True),
+        "total_pages":     s.IntegerField(allow_null=True),
+        "session_active":  s.BooleanField(),
+    })},
+)
 @api_view(["GET"])
 def status_view(request):
     """Return active document info and whether the caller has a valid session token."""
@@ -68,6 +98,18 @@ def status_view(request):
 
 
 # ── History ────────────────────────────────────────────────────────────────────
+@extend_schema(
+    tags=["session"],
+    summary="Conversation history",
+    description="Returns all messages for the session identified by `X-Chat-Token`. Returns an empty list if the token is missing or invalid.",
+    parameters=[_CHAT_TOKEN_HEADER],
+    responses={200: inline_serializer("HistoryResponse", fields={
+        "messages": s.ListField(child=inline_serializer("Message", fields={
+            "role":    s.ChoiceField(choices=["user", "assistant"]),
+            "content": s.CharField(),
+        })),
+    })},
+)
 @api_view(["GET"])
 def history_view(request):
     """Return the full conversation history for the session identified by X-Chat-Token."""
@@ -110,6 +152,27 @@ def _send_verification_email(email, name, code):
 
 
 # ── Request OTP ────────────────────────────────────────────────────────────────
+@extend_schema(
+    tags=["auth"],
+    summary="Request OTP (step 1)",
+    description=(
+        "Send a 6-digit verification code to the provided email address. "
+        "Returns a `verification_id` to be used in `POST /verify-otp/`."
+    ),
+    request=inline_serializer("RequestOtpRequest", fields={
+        "name":  s.CharField(),
+        "email": s.EmailField(),
+    }),
+    responses={
+        200: inline_serializer("RequestOtpResponse", fields={
+            "status":          s.ChoiceField(choices=["ok", "error"]),
+            "verification_id": s.IntegerField(),
+            "email_hint":      s.CharField(help_text="Masked email, e.g. j***@gmail.com"),
+        }),
+        400: OpenApiResponse(description="Missing or invalid name / email."),
+        500: OpenApiResponse(description="Failed to send the verification email."),
+    },
+)
 @api_view(["POST"])
 def request_otp_view(request):
     """
@@ -168,6 +231,25 @@ def request_otp_view(request):
 
 
 # ── Verify OTP ─────────────────────────────────────────────────────────────────
+@extend_schema(
+    tags=["auth"],
+    summary="Verify OTP and get session token (step 2)",
+    description=(
+        "Submit the 6-digit code received by email. "
+        "On success returns a `token` — include it as `X-Chat-Token` in subsequent requests."
+    ),
+    request=inline_serializer("VerifyOtpRequest", fields={
+        "verification_id": s.IntegerField(),
+        "code":            s.CharField(max_length=6),
+    }),
+    responses={
+        200: inline_serializer("VerifyOtpResponse", fields={
+            "status": s.ChoiceField(choices=["ok", "error"]),
+            "token":  s.UUIDField(help_text="Session token for X-Chat-Token header"),
+        }),
+        400: OpenApiResponse(description="Invalid, expired or already-used code."),
+    },
+)
 @api_view(["POST"])
 def verify_otp_view(request):
     """
@@ -227,6 +309,21 @@ def verify_otp_view(request):
 
 
 # ── Resend OTP ─────────────────────────────────────────────────────────────────
+@extend_schema(
+    tags=["auth"],
+    summary="Resend OTP code",
+    description="Regenerate and resend the verification code. Only one resend is allowed per verification session.",
+    request=inline_serializer("ResendOtpRequest", fields={
+        "verification_id": s.IntegerField(),
+    }),
+    responses={
+        200: inline_serializer("ResendOtpResponse", fields={
+            "status": s.ChoiceField(choices=["ok", "error"]),
+        }),
+        400: OpenApiResponse(description="Invalid session or resend limit already reached."),
+        500: OpenApiResponse(description="Failed to resend the email."),
+    },
+)
 @api_view(["POST"])
 def resend_otp_view(request):
     """
@@ -270,6 +367,35 @@ def resend_otp_view(request):
 
 
 # ── Chat (SSE streaming) ───────────────────────────────────────────────────────
+@extend_schema(
+    tags=["chat"],
+    summary="Stream LLM response (SSE)",
+    description=(
+        "Send a question and receive the LLM answer as a **Server-Sent Events** stream.\n\n"
+        "Each event carries a single text token:\n"
+        "```\ndata: Hello\\n\\n\ndata:  world\\n\\n\n...\ndata: [DONE]\\n\\n\n```\n\n"
+        "Newlines inside a token are escaped as `\\\\n`. "
+        "The stream ends with the sentinel event `[DONE]`. "
+        "On error the stream ends with `[ERROR: <message>]`.\n\n"
+        "Requires a valid `X-Chat-Token` header and an active document."
+    ),
+    parameters=[OpenApiParameter(
+        name="X-Chat-Token",
+        location=OpenApiParameter.HEADER,
+        description="Session token from `POST /verify-otp/`.",
+        required=True,
+        type=OpenApiTypes.UUID,
+    )],
+    request=inline_serializer("ChatRequest", fields={
+        "question": s.CharField(),
+    }),
+    responses={
+        200: OpenApiResponse(description="text/event-stream — SSE token stream ending with `[DONE]`."),
+        400: OpenApiResponse(description="Empty question or no active document."),
+        403: OpenApiResponse(description="Missing or invalid X-Chat-Token."),
+        405: OpenApiResponse(description="Method not allowed (must be POST)."),
+    },
+)
 @csrf_exempt
 def chat_view(request):
     """
@@ -555,7 +681,33 @@ def chat_view(request):
     return response
 
 
+# ── Embeddable widget iframe page ─────────────────────────────────────────────
+@extend_schema(exclude=True)
+@xframe_options_exempt
+@ensure_csrf_cookie
+def widget_view(request):
+    """
+    Serve the embeddable chatbot widget as a standalone iframe page.
+    @xframe_options_exempt allows any external site to embed this URL in an iframe.
+    All API calls made inside the iframe target the same origin, so no CORS is needed.
+    """
+    return render(request, "widget.html")
+
+
 # ── Reset (end current named session) ─────────────────────────────────────────
+@extend_schema(
+    tags=["session"],
+    summary="End session",
+    description=(
+        "Log the end of the session. "
+        "The frontend removes the token from localStorage; DB records are preserved for admin reporting."
+    ),
+    parameters=[_CHAT_TOKEN_HEADER],
+    request=None,
+    responses={200: inline_serializer("ResetResponse", fields={
+        "status": s.ChoiceField(choices=["ok"]),
+    })},
+)
 @api_view(["POST"])
 def reset_view(request):
     """

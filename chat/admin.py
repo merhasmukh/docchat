@@ -217,13 +217,40 @@ class DocumentAdmin(admin.ModelAdmin):
 
 @admin.register(LLMConfig)
 class LLMConfigAdmin(admin.ModelAdmin):
-    list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding", "context_mode", "use_gemini_cache")
+    list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding",
+                    "context_mode", "use_gemini_cache", "embed_script_link")
 
     def has_add_permission(self, request):
         return not LLMConfig.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    # ── Widget embed script page ───────────────────────────────────────────
+    def get_urls(self):
+        from django.urls import path
+        return [
+            path("widget-script/",
+                 self.admin_site.admin_view(self.widget_script_view),
+                 name="chat_llmconfig_widget_script"),
+        ] + super().get_urls()
+
+    def widget_script_view(self, request):
+        from django.template.response import TemplateResponse
+        server_url = request.build_absolute_uri("/").rstrip("/")
+        context = {
+            "title": "Widget Embed Script",
+            "server_url": server_url,
+            **self.admin_site.each_context(request),
+        }
+        return TemplateResponse(request, "admin/widget_script.html", context)
+
+    @admin.display(description="Embed Script")
+    def embed_script_link(self, obj):
+        from django.urls import reverse
+        from django.utils.html import format_html
+        url = reverse("admin:chat_llmconfig_widget_script")
+        return format_html('<a href="{}">📋 Get embed script</a>', url)
 
 
 # ── Model Pricing ──────────────────────────────────────────────────────────────

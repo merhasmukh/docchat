@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "chat",
 ]
 
@@ -66,9 +67,41 @@ SESSION_COOKIE_AGE = 86400  # 24 hours
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": [],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "DocChat API",
+    "DESCRIPTION": (
+        "Document-based conversational AI API.\n\n"
+        "## Authentication\n"
+        "Most endpoints require an `X-Chat-Token` header obtained via the OTP verification flow:\n"
+        "1. `POST /request-otp/` — provide name + email, receive `verification_id`\n"
+        "2. `POST /verify-otp/` — submit the 6-digit code, receive `token`\n"
+        "3. Pass `token` as the `X-Chat-Token` header on subsequent requests.\n\n"
+        "## Chat Streaming\n"
+        "`POST /chat/` returns a Server-Sent Events stream. "
+        "Each event carries a single token; the final event is `[DONE]`."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "ENUM_NAME_OVERRIDES": {
+        "ApiStatusEnum": ["ok", "error"],
+    },
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "chat.schema_hooks.inject_chat_endpoint",
+    ],
+    "TAGS": [
+        {"name": "auth",    "description": "Email OTP authentication flow"},
+        {"name": "session", "description": "Session status and conversation history"},
+        {"name": "chat",    "description": "Streaming LLM chat interaction"},
+    ],
 }
 
 STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"   # output dir for collectstatic
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

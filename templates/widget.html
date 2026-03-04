@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>DocChat Widget</title>
+  {% load static %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="{% static 'css/widget.css' %}">
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div id="wg-header">
+    <div class="wg-header-left">
+      <div class="wg-avatar">
+        <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+      </div>
+      <div class="wg-header-info">
+        <span id="wg-title">DocChat</span>
+        <span id="wg-doc-indicator" class="wg-doc-badge d-none">
+          <span class="wg-status-dot"></span>
+          <span id="wg-doc-name"></span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── No-document notice ─────────────────────────────────────────────── -->
+  <div id="wg-nodoc" class="wg-screen d-none">
+    <div class="wg-empty-state">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+      <p>No document is currently loaded.<br>Please check back later.</p>
+    </div>
+  </div>
+
+  <!-- ── Auth screens ───────────────────────────────────────────────────── -->
+  <div id="wg-auth" class="wg-screen d-none">
+
+    <!-- Step 1: Name + Email -->
+    <div id="wg-step1">
+      <div class="wg-auth-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+      </div>
+      <h6 class="wg-auth-title">Tell us who you are</h6>
+      <p class="wg-auth-sub">We'll send a quick code to verify your email.</p>
+      <div class="wg-field">
+        <input id="wg-name" type="text" class="wg-input" placeholder="Your name" autocomplete="name">
+      </div>
+      <div class="wg-field">
+        <input id="wg-email" type="email" class="wg-input" placeholder="Email address" autocomplete="email">
+      </div>
+      <div id="wg-auth-error" class="wg-error d-none"></div>
+      <button id="wg-req-btn" class="wg-btn wg-btn-primary w-100">Send verification code</button>
+    </div>
+
+    <!-- Step 2: OTP -->
+    <div id="wg-step2" class="d-none">
+      <div class="wg-auth-icon">
+        <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+      </div>
+      <h6 class="wg-auth-title">Check your inbox</h6>
+      <p id="wg-email-hint" class="wg-auth-sub"></p>
+      <input id="wg-code" type="text" inputmode="numeric" pattern="[0-9]*"
+             maxlength="6" class="wg-input wg-otp-input" placeholder="000000"
+             autocomplete="one-time-code">
+      <div id="wg-otp-error" class="wg-error d-none"></div>
+      <button id="wg-verify-btn" class="wg-btn wg-btn-primary w-100 mt-2">Verify</button>
+      <div class="wg-otp-footer">
+        <span id="wg-countdown" class="wg-countdown-text">Resend in 60s</span>
+        <button id="wg-resend-btn" class="wg-link d-none">Resend code</button>
+        <span class="wg-sep d-none" id="wg-sep">·</span>
+        <button id="wg-back-btn" class="wg-link">← Back</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Chat messages ──────────────────────────────────────────────────── -->
+  <div id="wg-chat" class="wg-screen d-none">
+    <div id="wg-messages"></div>
+  </div>
+
+  <!-- ── Input bar ──────────────────────────────────────────────────────── -->
+  <div id="wg-input-bar" class="d-none">
+    <textarea id="wg-input" rows="1" placeholder="Ask a question…"
+              autocomplete="off" spellcheck="true"></textarea>
+    <button id="wg-send-btn" aria-label="Send">
+      <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    </button>
+  </div>
+
+  <!-- ── Scripts ────────────────────────────────────────────────────────── -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <script src="{% static 'js/widget_chat.js' %}"></script>
+</body>
+</html>

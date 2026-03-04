@@ -1,0 +1,144 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Widget Embed Script — {{ site_title }}{% endblock %}
+
+{% block content %}
+<h1>Widget Embed Script</h1>
+<p style="color:#666;margin-bottom:24px;">
+  Copy the snippet below and paste it into the <code>&lt;body&gt;</code> of any webpage
+  to embed the DocChat chatbot bubble.
+</p>
+
+<style>
+  .wes-card{background:#f8f6f4;border:1px solid #e0dbd6;border-radius:8px;padding:20px 24px;margin-bottom:24px;}
+  .wes-card h2{font-size:15px;font-weight:600;margin:0 0 12px;color:#333;}
+  .wes-pre{position:relative;}
+  .wes-pre pre{
+    background:#1e1e2e;color:#cdd6f4;
+    border-radius:6px;padding:16px 18px;
+    font-size:13px;line-height:1.6;
+    overflow-x:auto;white-space:pre;
+    margin:0;
+  }
+  .wes-copy{
+    position:absolute;top:8px;right:8px;
+    background:#735557;color:#fff;border:none;border-radius:5px;
+    padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;
+    transition:opacity .15s;
+  }
+  .wes-copy:hover{opacity:.85;}
+  .wes-table{width:100%;border-collapse:collapse;font-size:13px;}
+  .wes-table th{background:#f0ebe6;text-align:left;padding:8px 12px;border-bottom:2px solid #ddd;}
+  .wes-table td{padding:8px 12px;border-bottom:1px solid #eee;vertical-align:top;}
+  .wes-table tr:last-child td{border-bottom:none;}
+  .wes-table code{background:#f0ebe6;padding:2px 6px;border-radius:4px;font-size:12px;}
+  .wes-note{background:#fff8e1;border-left:4px solid #f59e0b;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;color:#555;}
+</style>
+
+<!-- ── Minimal snippet ────────────────────────────────────────────────── -->
+<div class="wes-card">
+  <h2>Minimal (uses all defaults)</h2>
+  <div class="wes-pre">
+    <pre id="snippet-minimal">&lt;script
+  src="{{ server_url }}/static/js/widget.js"
+  data-server="{{ server_url }}"
+&gt;&lt;/script&gt;</pre>
+    <button class="wes-copy" onclick="copySnippet('snippet-minimal', this)">Copy</button>
+  </div>
+</div>
+
+<!-- ── Full snippet ───────────────────────────────────────────────────── -->
+<div class="wes-card">
+  <h2>Full (all customisation options)</h2>
+  <div class="wes-pre">
+    <pre id="snippet-full">&lt;script
+  src="{{ server_url }}/static/js/widget.js"
+  data-server="{{ server_url }}"
+  data-position="bottom-right"
+  data-color="#735557"
+  data-title="Ask our AI"
+  data-greeting="Hello! How can I help?"
+  data-mode="popup"
+&gt;&lt;/script&gt;</pre>
+    <button class="wes-copy" onclick="copySnippet('snippet-full', this)">Copy</button>
+  </div>
+</div>
+
+<!-- ── Attribute reference ────────────────────────────────────────────── -->
+<div class="wes-card">
+  <h2>Attribute reference</h2>
+  <table class="wes-table">
+    <thead>
+      <tr>
+        <th>Attribute</th>
+        <th>Default</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>data-server</code></td>
+        <td><em>required</em></td>
+        <td>Base URL of this DocChat server — no trailing slash.</td>
+      </tr>
+      <tr>
+        <td><code>data-position</code></td>
+        <td><code>bottom-right</code></td>
+        <td><code>bottom-right</code> or <code>bottom-left</code> — where the bubble appears.</td>
+      </tr>
+      <tr>
+        <td><code>data-color</code></td>
+        <td><code>#735557</code></td>
+        <td>Accent colour for the bubble and widget header (any CSS colour value).</td>
+      </tr>
+      <tr>
+        <td><code>data-title</code></td>
+        <td><code>DocChat</code></td>
+        <td>Title shown in the widget header.</td>
+      </tr>
+      <tr>
+        <td><code>data-greeting</code></td>
+        <td><em>none</em></td>
+        <td>Opening message shown as the first assistant bubble when the widget opens.</td>
+      </tr>
+      <tr>
+        <td><code>data-mode</code></td>
+        <td><code>popup</code></td>
+        <td><code>popup</code> — compact corner popup. <code>fullpage</code> — full viewport overlay.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Live preview URL ───────────────────────────────────────────────── -->
+<div class="wes-card">
+  <h2>Preview the widget directly</h2>
+  <p style="margin:0;font-size:13px;color:#555;">
+    Open the widget page in a browser tab to verify it loads correctly:<br>
+    <a href="{{ server_url }}/widget/" target="_blank" style="color:#735557;">
+      {{ server_url }}/widget/
+    </a>
+  </p>
+</div>
+
+<div class="wes-note">
+  <strong>Tip:</strong> The <code>data-server</code> value is auto-filled with this server's URL
+  (<strong>{{ server_url }}</strong>). Update it if you deploy to a different domain.
+</div>
+
+<script>
+function copySnippet(id, btn) {
+  var text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    var orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.background = '#4ade80';
+    btn.style.color = '#000';
+    setTimeout(function () {
+      btn.textContent = orig;
+      btn.style.background = '#735557';
+      btn.style.color = '#fff';
+    }, 2000);
+  });
+}
+</script>
+{% endblock %}

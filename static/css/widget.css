@@ -1,0 +1,526 @@
+/* ── DocChat Widget CSS ────────────────────────────────────────────────────── */
+/* Uses --wg-accent CSS custom property set dynamically by widget_chat.js      */
+
+:root {
+  --wg-accent: #735557;
+  --wg-accent-light: #8d6e70;
+  --wg-bg: #ffffff;
+  --wg-surface: #f8f6f4;
+  --wg-border: #e8e3de;
+  --wg-text: #1a1a1a;
+  --wg-text-muted: #6b7280;
+  --wg-user-bubble: var(--wg-accent);
+  --wg-user-text: #ffffff;
+  --wg-bot-bubble: #f0ebe6;
+  --wg-bot-text: #1a1a1a;
+  --wg-radius: 14px;
+  --wg-radius-sm: 8px;
+}
+
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--wg-text);
+  background: var(--wg-bg);
+  margin: 0;
+  height: 100vh;
+  height: 100dvh; /* dynamic viewport height — shrinks when virtual keyboard opens */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
+#wg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  /* Push content below notch / status bar on devices with safe areas */
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  padding-right: calc(16px + env(safe-area-inset-right, 0px));
+  background: var(--wg-accent);
+  color: #fff;
+  flex-shrink: 0;
+  min-height: 60px;
+}
+
+.wg-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wg-avatar svg {
+  width: 18px;
+  height: 18px;
+  fill: #fff;
+}
+
+.wg-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#wg-title {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.wg-doc-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.wg-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  flex-shrink: 0;
+}
+
+#wg-doc-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+/* ── Screens (auth, chat, nodoc) ──────────────────────────────────────────── */
+.wg-screen {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 16px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch; /* smooth momentum scrolling on iOS */
+  overscroll-behavior: contain;      /* prevent pull-to-refresh on Android */
+}
+
+/* scrollbar */
+.wg-screen::-webkit-scrollbar { width: 4px; }
+.wg-screen::-webkit-scrollbar-track { background: transparent; }
+.wg-screen::-webkit-scrollbar-thumb { background: var(--wg-border); border-radius: 2px; }
+
+/* ── Empty / no-doc state ─────────────────────────────────────────────────── */
+.wg-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--wg-text-muted);
+  text-align: center;
+}
+
+.wg-empty-state svg {
+  width: 48px;
+  height: 48px;
+  fill: var(--wg-border);
+}
+
+/* ── Auth screens ─────────────────────────────────────────────────────────── */
+.wg-auth-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--wg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.wg-auth-icon svg {
+  width: 28px;
+  height: 28px;
+  fill: var(--wg-accent);
+}
+
+.wg-auth-title {
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 4px;
+  color: var(--wg-text);
+}
+
+.wg-auth-sub {
+  font-size: 13px;
+  color: var(--wg-text-muted);
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* ── Form fields ──────────────────────────────────────────────────────────── */
+.wg-field {
+  margin-bottom: 10px;
+}
+
+.wg-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  border: 1.5px solid var(--wg-border);
+  border-radius: var(--wg-radius-sm);
+  background: var(--wg-bg);
+  color: var(--wg-text);
+  transition: border-color .15s;
+  outline: none;
+  font-family: inherit;
+}
+
+.wg-input:focus {
+  border-color: var(--wg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 15%, transparent);
+}
+
+/* OTP code input */
+.wg-otp-input {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: .4em;
+  text-align: center;
+  padding: 12px 14px;
+  width: 100%;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.wg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--wg-radius-sm);
+  cursor: pointer;
+  transition: opacity .15s, transform .1s;
+  font-family: inherit;
+}
+
+.wg-btn:active { transform: scale(.98); }
+.wg-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.wg-btn-primary {
+  background: var(--wg-accent);
+  color: #fff;
+}
+
+.wg-btn-primary:hover:not(:disabled) { opacity: .88; }
+
+.wg-link {
+  background: none;
+  border: none;
+  color: var(--wg-accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+}
+
+.wg-link:hover { opacity: .75; }
+
+/* ── OTP footer (countdown / resend / back) ───────────────────────────────── */
+.wg-otp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.wg-countdown-text {
+  font-size: 13px;
+  color: var(--wg-text-muted);
+}
+
+.wg-sep {
+  color: var(--wg-text-muted);
+  font-size: 13px;
+}
+
+/* ── Error messages ───────────────────────────────────────────────────────── */
+.wg-error {
+  font-size: 13px;
+  color: #dc2626;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  background: #fef2f2;
+  border-radius: var(--wg-radius-sm);
+  border: 1px solid #fecaca;
+}
+
+/* ── Chat messages ────────────────────────────────────────────────────────── */
+#wg-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.wg-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+  animation: wg-in .15s ease;
+}
+
+@keyframes wg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wg-msg.wg-user {
+  align-self: flex-end;
+}
+
+.wg-msg.wg-bot {
+  align-self: flex-start;
+}
+
+.wg-bubble {
+  padding: 10px 14px;
+  border-radius: var(--wg-radius);
+  font-size: 14px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.wg-user .wg-bubble {
+  background: var(--wg-user-bubble);
+  color: var(--wg-user-text);
+  border-bottom-right-radius: 4px;
+}
+
+.wg-bot .wg-bubble {
+  background: var(--wg-bot-bubble);
+  color: var(--wg-bot-text);
+  border-bottom-left-radius: 4px;
+}
+
+/* ── Markdown inside bot bubbles ──────────────────────────────────────────── */
+.wg-bot .wg-bubble p { margin: 0 0 .5em; }
+.wg-bot .wg-bubble p:last-child { margin-bottom: 0; }
+.wg-bot .wg-bubble ul,
+.wg-bot .wg-bubble ol { padding-left: 1.4em; margin: .4em 0; }
+.wg-bot .wg-bubble li { margin-bottom: .25em; }
+.wg-bot .wg-bubble h1,
+.wg-bot .wg-bubble h2,
+.wg-bot .wg-bubble h3 { font-size: 1em; font-weight: 700; margin: .6em 0 .2em; }
+.wg-bot .wg-bubble code {
+  background: rgba(0,0,0,.08);
+  border-radius: 4px;
+  padding: .15em .35em;
+  font-size: .9em;
+  font-family: 'Fira Code', 'Consolas', monospace;
+}
+.wg-bot .wg-bubble pre {
+  background: rgba(0,0,0,.07);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: .5em 0;
+}
+.wg-bot .wg-bubble pre code { background: none; padding: 0; }
+.wg-bot .wg-bubble strong { font-weight: 700; }
+.wg-bot .wg-bubble blockquote {
+  border-left: 3px solid var(--wg-accent);
+  margin: .4em 0;
+  padding-left: .8em;
+  color: #555;
+}
+.wg-bot .wg-bubble a { color: var(--wg-accent); }
+
+/* Copy button on bot bubbles */
+.wg-msg-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity .15s;
+}
+
+.wg-msg:hover .wg-msg-actions { opacity: 1; }
+
+.wg-copy-btn {
+  background: none;
+  border: 1px solid var(--wg-border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--wg-text-muted);
+  transition: border-color .15s, color .15s;
+}
+
+.wg-copy-btn:hover { border-color: var(--wg-accent); color: var(--wg-accent); }
+
+/* Streaming cursor */
+.wg-cursor::after {
+  content: '▍';
+  display: inline-block;
+  animation: wg-blink .6s step-end infinite;
+  color: var(--wg-accent);
+}
+
+@keyframes wg-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Input bar ────────────────────────────────────────────────────────────── */
+#wg-input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  /* Keep input bar above home indicator on notchless-bottom iPhones */
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(12px + env(safe-area-inset-left, 0px));
+  padding-right: calc(12px + env(safe-area-inset-right, 0px));
+  border-top: 1px solid var(--wg-border);
+  background: var(--wg-bg);
+  flex-shrink: 0;
+}
+
+#wg-input {
+  flex: 1;
+  resize: none;
+  border: 1.5px solid var(--wg-border);
+  border-radius: var(--wg-radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  max-height: 120px;
+  overflow-y: auto;
+  outline: none;
+  transition: border-color .15s;
+  background: var(--wg-bg);
+  color: var(--wg-text);
+}
+
+#wg-input:focus {
+  border-color: var(--wg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 12%, transparent);
+}
+
+#wg-send-btn {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--wg-accent);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity .15s, transform .1s;
+}
+
+#wg-send-btn:hover { opacity: .85; }
+#wg-send-btn:active { transform: scale(.92); }
+#wg-send-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+#wg-send-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: #fff;
+}
+
+/* ── Spinner ──────────────────────────────────────────────────────────────── */
+.wg-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: wg-spin .7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes wg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Mobile / touch adjustments ──────────────────────────────────────────── */
+
+/* Touch devices: copy button always visible (no hover state on touch screens) */
+@media (hover: none) {
+  .wg-msg-actions { opacity: 1; }
+}
+
+@media (max-width: 600px) {
+  /* Prevent iOS Safari from zooming in when an input is focused.
+     iOS zooms if font-size < 16px. */
+  .wg-input,
+  #wg-input {
+    font-size: 16px;
+  }
+
+  /* OTP code input — slightly smaller letter-spacing on narrow screens */
+  .wg-otp-input {
+    font-size: 24px;
+    letter-spacing: .3em;
+    padding: 10px 12px;
+  }
+
+  /* Ensure minimum 44 × 44 px tap targets (Apple HIG / WCAG 2.5.5) */
+  .wg-btn {
+    min-height: 44px;
+    padding: 10px 20px;
+  }
+
+  #wg-send-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .wg-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 0;
+  }
+
+  .wg-copy-btn {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  /* Give auth icon a bit more breathing room */
+  .wg-auth-icon {
+    width: 52px;
+    height: 52px;
+  }
+}
