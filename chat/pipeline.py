@@ -226,6 +226,40 @@ def _cosine_scores(query_emb: list[float], chunk_embs: list[list[float]]) -> lis
     return (C @ q).tolist()
 
 
+def split_text_into_pages(text: str, chunk_size: int = 3_000) -> dict:
+    """
+    Split plain pasted text into synthetic 'pages' for RAG embedding.
+
+    Splits on paragraph boundaries (double newlines), merging paragraphs until
+    a chunk reaches *chunk_size* characters.  Each resulting chunk becomes one
+    page in the pages_data dict that the rest of the pipeline expects.
+    """
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    pages: list[str] = []
+    current: list[str] = []
+    size = 0
+
+    for para in paragraphs:
+        if size + len(para) > chunk_size and current:
+            pages.append("\n\n".join(current))
+            current, size = [para], len(para)
+        else:
+            current.append(para)
+            size += len(para)
+
+    if current:
+        pages.append("\n\n".join(current))
+
+    # Guarantee at least one page even for very short text
+    if not pages:
+        pages = [text]
+
+    return {
+        "total_pages": len(pages),
+        "pages": [{"page": i + 1, "markdown": p} for i, p in enumerate(pages)],
+    }
+
+
 def build_rag_chunks(pages_data: dict, embedding_method: str) -> list[dict]:
     """
     Build page-level chunks and optionally embed them.

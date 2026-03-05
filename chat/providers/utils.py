@@ -86,7 +86,6 @@ CONVERSATIONAL_SYSTEM_PROMPT = (
     "You are a friendly and helpful document assistant. "
     "Respond warmly and naturally to the user's message. "
     "Keep your reply brief. "
-    "You can let the user know you are ready to answer questions about their uploaded document."
 )
 
 # Standard reply when the answer is not in the document.

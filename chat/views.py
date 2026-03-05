@@ -610,10 +610,13 @@ def chat_view(request):
                     if cached_input_tokens and pricing.cache_read_price_per_million
                     else Decimal(0)
                 )
-                # Storage: 1-hour approximation per message that uses the cache
+                # Storage: only billed when WE created an explicit Gemini cache.
+                # Gemini's automatic/implicit caching gives a read-rate discount but
+                # does not incur a separate storage charge.
+                gemini_explicit_cache = usage_out.get("gemini_explicit_cache", False)
                 cache_storage_cost = (
                     Decimal(cached_input_tokens) * pricing.cache_storage_price_per_million_per_hour / Decimal(1_000_000)
-                    if cached_input_tokens and pricing.cache_storage_price_per_million_per_hour
+                    if gemini_explicit_cache and cached_input_tokens and pricing.cache_storage_price_per_million_per_hour
                     else Decimal(0)
                 )
             except ModelPricing.DoesNotExist:

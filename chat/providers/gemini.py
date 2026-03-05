@@ -133,6 +133,10 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
                 usage_out["input_tokens"]         = meta.prompt_token_count or 0
                 usage_out["output_tokens"]        = meta.candidates_token_count or 0
                 usage_out["cached_input_tokens"]  = getattr(meta, "cached_content_token_count", None) or 0
+                # Distinguish explicit cache (we created it) from Gemini's implicit/automatic
+                # caching.  Storage cost is only billable for explicit cache; implicit cache
+                # gives a read-rate discount with no storage charge.
+                usage_out["gemini_explicit_cache"] = cached
         logger.info(
             "LLM stream done  | provider=gemini | model=%s | response_chars=%d | time=%.2fs | cached=%s",
             model_name, output_chars, time.perf_counter() - t0, cached,

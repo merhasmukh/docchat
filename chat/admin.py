@@ -2,6 +2,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 from django import forms
 from django.contrib import admin
@@ -16,27 +17,76 @@ ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", 
 
 
 class DocumentUploadForm(forms.ModelForm):
+    # Use a different name ("source_choice") so Django admin's modelform_factory
+    # does NOT confuse this with the model's source_type CharField and replace the
+    # RadioSelect widget with an auto-generated Select dropdown.
+    source_choice = forms.ChoiceField(
+        label="Source",
+        choices=[("file", "Upload File"), ("text", "Paste Text")],
+        initial="file",
+        widget=forms.RadioSelect,
+        help_text="Choose how to provide the document content.",
+    )
     upload_file = forms.FileField(
         label="Document file",
         required=False,
         widget=forms.FileInput(attrs={"accept": ".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp"}),
         help_text="PDF, PNG, JPG, TIFF, BMP, or WEBP — max 50 MB",
     )
+    doc_label = forms.CharField(
+        label="Document name",
+        required=False,
+        max_length=500,
+        help_text="A short label to identify this content (e.g. 'Company FAQ v2').",
+    )
+    pasted_text = forms.CharField(
+        label="Text content",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 18, "style": "font-family:monospace;font-size:13px;"}),
+        help_text="Paste or type the full text you want to use as the document context.",
+    )
+    text_context_mode = forms.ChoiceField(
+        label="Context mode",
+        required=False,
+        initial="full",   # pre-select "Full Context" so the field is never blank
+        choices=[
+            ("full", "Full Context — send all text to the LLM in every request"),
+            ("rag",  "Chunked / RAG — split into ~3 000-character chunks and retrieve only relevant ones"),
+        ],
+        widget=forms.RadioSelect,
+    )
 
     class Meta:
         model  = Document
         fields = ["is_active"]
 
-    def clean_upload_file(self):
-        f = self.cleaned_data.get("upload_file")
-        if f:
-            from pathlib import Path
-            ext = Path(f.name).suffix.lower()
-            if ext not in ALLOWED_EXTENSIONS:
-                raise forms.ValidationError(
-                    f"File type '{ext}' not supported. Allowed: PDF, PNG, JPG, TIFF, BMP, WEBP"
-                )
-        return f
+    def clean(self):
+        data = super().clean()
+        src = data.get("source_choice")
+
+        if src == "file":
+            f = data.get("upload_file")
+            if not f:
+                self.add_error("upload_file", "Please choose a file to upload.")
+            else:
+                ext = Path(f.name).suffix.lower()
+                if ext not in ALLOWED_EXTENSIONS:
+                    self.add_error(
+                        "upload_file",
+                        f"File type '{ext}' not supported. Allowed: PDF, PNG, JPG, TIFF, BMP, WEBP",
+                    )
+        else:  # text
+            if not data.get("pasted_text", "").strip():
+                self.add_error("pasted_text", "Please paste some text content.")
+            if not data.get("doc_label", "").strip():
+                self.add_error("doc_label", "Please provide a name for this document.")
+            if not data.get("text_context_mode"):
+                self.add_error("text_context_mode", "Please choose a context mode.")
+
+        return data
+
+    class Media:
+        js = ("admin/js/paste_text_toggle.js",)
 
 
 @admin.register(Document)
@@ -56,54 +106,127 @@ class DocumentAdmin(admin.ModelAdmin):
     def get_fields(self, request, obj=None):
         if obj:
             return (
-                "original_filename", "status", "error_message",
+                "source_type", "original_filename", "status", "error_message",
                 "total_pages", "char_count", "context_mode",
                 "is_active",
                 "markdown_path", "json_path", "rag_chunks_path", "gemini_cache_name",
                 "created_at",
             )
-        return ("upload_file",)
+        # Add form — show all source-selection fields
+        return ("source_choice", "upload_file", "doc_label", "pasted_text", "text_context_mode")
 
     def get_readonly_fields(self, request, obj=None):
         if obj:
             return (
-                "original_filename", "status", "error_message",
+                "source_type", "original_filename", "status", "error_message",
                 "total_pages", "char_count", "context_mode",
                 "markdown_path", "json_path", "rag_chunks_path", "gemini_cache_name",
                 "created_at",
             )
         return ()
 
-    # ── Save: run OCR pipeline on new upload ──────────────────────────────────
+    # ── Save: OCR pipeline for file uploads / direct write for pasted text ───
 
     def save_model(self, request, obj, form, change):
         if change:
             if obj.is_active:
-                # Ensure only this document is active before saving.
                 Document.objects.exclude(pk=obj.pk).filter(is_active=True).update(is_active=False)
             super().save_model(request, obj, form, change)
             return
 
+        src = form.cleaned_data.get("source_choice", "file")
+
+        if src == "text":
+            self._save_pasted_text(request, obj, form, change)
+        else:
+            self._save_uploaded_file(request, obj, form, change)
+
+    def _save_pasted_text(self, request, obj, form, change):
+        """Save pasted text directly, bypassing OCR."""
+        from .pipeline import build_rag_chunks, split_text_into_pages
+        from .models import LLMConfig
+        from .providers.gemini import create_gemini_cache
+
+        markdown_text = form.cleaned_data["pasted_text"].strip()
+        mode_choice   = form.cleaned_data["text_context_mode"]   # "full" or "rag"
+        base_id       = str(uuid.uuid4())
+        md_path       = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".md")
+        json_path     = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".json")
+        chunks_path   = os.path.join(settings.MARKDOWN_FOLDER, base_id + "_chunks.json")
+
+        obj.original_filename = form.cleaned_data["doc_label"].strip()
+        obj.source_type       = "text"
+        obj.status            = "pending"
+        super().save_model(request, obj, form, change)   # persist → get pk
+
+        try:
+            with open(md_path, "w", encoding="utf-8") as fh:
+                fh.write(markdown_text)
+
+            if mode_choice == "rag":
+                pages_data = split_text_into_pages(markdown_text)
+            else:
+                pages_data = {
+                    "total_pages": 1,
+                    "pages": [{"page": 1, "markdown": markdown_text}],
+                }
+            pages_data["source_label"] = obj.original_filename
+
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(pages_data, fh, ensure_ascii=False, indent=2)
+
+            cfg    = LLMConfig.get_active()
+            chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
+            with open(chunks_path, "w", encoding="utf-8") as fh:
+                json.dump(chunks, fh, ensure_ascii=False)
+
+            gemini_cache_name = None
+            if mode_choice == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
+                gemini_cache_name = create_gemini_cache(markdown_text, cfg.gemini_model)
+
+            obj.markdown_path     = md_path
+            obj.json_path         = json_path
+            obj.rag_chunks_path   = chunks_path
+            obj.gemini_cache_name = gemini_cache_name or ""
+            obj.char_count        = len(markdown_text)
+            obj.total_pages       = pages_data["total_pages"]
+            obj.context_mode      = mode_choice
+            obj.status            = "ready"
+
+            self.message_user(
+                request,
+                f"'{obj.original_filename}' saved — "
+                f"{pages_data['total_pages']} chunk(s), {len(markdown_text):,} chars, "
+                f"{mode_choice} mode.",
+            )
+
+        except Exception as exc:
+            obj.status        = "error"
+            obj.error_message = str(exc)
+            self.message_user(request, f"Failed to process pasted text: {exc}", level="error")
+
+        obj.save()
+
+    def _save_uploaded_file(self, request, obj, form, change):
+        """Run the OCR + RAG pipeline on an uploaded file."""
         uploaded_file = form.cleaned_data.get("upload_file")
         if not uploaded_file:
             self.message_user(request, "No file was provided.", level="error")
             return
 
-        from pathlib import Path
-        ext       = Path(uploaded_file.name).suffix.lower()
-        safe_name = str(uuid.uuid4()) + ext
+        ext         = Path(uploaded_file.name).suffix.lower()
+        safe_name   = str(uuid.uuid4()) + ext
         upload_path = os.path.join(settings.UPLOAD_FOLDER, safe_name)
 
-        # Save temp file to disk
         with open(upload_path, "wb") as fh:
             for chunk in uploaded_file.chunks():
                 fh.write(chunk)
 
         obj.original_filename = uploaded_file.name
+        obj.source_type       = "file"
         obj.status            = "pending"
-        super().save_model(request, obj, form, change)  # persist with pending status
+        super().save_model(request, obj, form, change)   # persist → get pk
 
-        # Run the OCR + RAG pipeline (blocking — same logic as the old upload_view)
         t0 = time.perf_counter()
         try:
             from .pipeline import convert_to_markdown, build_rag_chunks

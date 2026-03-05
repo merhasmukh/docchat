@@ -112,7 +112,13 @@ class Document(models.Model):
         ("error",   "Error"),
     ]
 
+    SOURCE_CHOICES = [
+        ("file", "File Upload"),
+        ("text", "Pasted Text"),
+    ]
+
     original_filename = models.CharField(max_length=500)
+    source_type       = models.CharField(max_length=10, choices=SOURCE_CHOICES, default="file")
     markdown_path     = models.CharField(max_length=500, blank=True)
     json_path         = models.CharField(max_length=500, blank=True)
     rag_chunks_path   = models.CharField(max_length=500, blank=True)
