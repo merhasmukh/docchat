@@ -382,3 +382,12 @@ def ask(question: str, history: list, markdown_text: str) -> tuple[str, float]:
         return _ask_sarvam(question, history, markdown_text, config.sarvam_model)
     else:  # ollama
         return _ask_ollama(question, history, markdown_text, config.ollama_model)
+
+
+def ask_raw(prompt: str) -> str:
+    """
+    Single non-streaming LLM call with a plain prompt — no document context, no history.
+    Used by the agent layer for tool-iteration reasoning and memory compression.
+    """
+    answer, _ = ask(prompt, [], "")
+    return answer

@@ -223,6 +223,13 @@ class LLMConfig(models.Model):
             "Disable to send the full document with every request (no cache storage cost)."
         ),
     )
+    agent_mode = models.BooleanField(
+        default=False,
+        help_text=(
+            "Enable agentic loop with tool-use and cross-session memory. "
+            "Agent can search the document, fetch specific pages, and remember users across sessions."
+        ),
+    )
 
     class Meta:
         verbose_name = "LLM Configuration"
@@ -281,3 +288,25 @@ class EmailVerification(models.Model):
         """Generate a new code and reset the 1-minute expiry. Call save() after."""
         self.code       = self.generate_code()
         self.expires_at = _tz.now() + _dt.timedelta(minutes=1)
+
+
+# ── Agent Memory ───────────────────────────────────────────────────────────────
+
+class AgentMemory(models.Model):
+    """
+    Persistent cross-session memory for a user, compressed and maintained by the agent.
+    Stores a short plain-text block of facts about the user (name, language, topics, etc.).
+    Updated in a background thread every N messages; capped at 500 chars.
+    """
+    user_email     = models.EmailField(unique=True, db_index=True)
+    memory_text    = models.TextField(blank=True)
+    total_sessions = models.IntegerField(default=0)
+    last_updated   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Agent Memory"
+        verbose_name_plural = "Agent Memories"
+        ordering            = ["-last_updated"]
+
+    def __str__(self):
+        return f"{self.user_email} ({self.total_sessions} sessions)"

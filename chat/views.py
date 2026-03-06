@@ -489,7 +489,13 @@ def chat_view(request):
 
     has_chunks = bool(rag_chunks_path and os.path.exists(rag_chunks_path))
 
-    if context_mode == "rag" and has_chunks:
+    # ── Agent mode: load memory; context is resolved inside the agent loop ──────
+    user_memory = ""
+    if cfg_active.agent_mode:
+        from .agent.memory import load_memory
+        user_memory = load_memory(session_obj.user_email)
+        markdown_text = ""  # agent loop handles context retrieval via tools
+    elif context_mode == "rag" and has_chunks:
         markdown_text = retrieve_relevant_context(question, rag_chunks_path, rag_embedding)
 
     elif cfg_active.provider == "sarvam":
@@ -520,8 +526,13 @@ def chat_view(request):
         usage_out: dict = {}
         t0 = time.perf_counter()
         try:
-            for token in ask_streaming(question, history, markdown_text, usage_out=usage_out,
-                                       gemini_cache_name=gemini_cache_name):
+            if cfg_active.agent_mode:
+                from .agent.loop import run_agent_streaming
+                _stream = run_agent_streaming(question, history, doc, cfg_active, user_memory, usage_out)
+            else:
+                _stream = ask_streaming(question, history, markdown_text, usage_out=usage_out,
+                                        gemini_cache_name=gemini_cache_name)
+            for token in _stream:
                 full_response.append(token)
                 safe_token = token.replace("\n", "\\n")
                 yield f"data: {safe_token}\n\n"
@@ -674,6 +685,24 @@ def chat_view(request):
                 "DB save FAILED | session_pk=%d | error=%s",
                 session_obj.pk, db_exc, exc_info=True,
             )
+
+        # ── Agent memory update (every 5 messages, non-blocking) ─────────────
+        if cfg_active.agent_mode:
+            new_count = session_obj.message_count + 1
+            if new_count % 5 == 0:
+                import threading
+                updated_history = history + [
+                    {"role": "user",      "content": question},
+                    {"role": "assistant", "content": "".join(full_response)},
+                ]
+                from .agent.memory import save_memory
+                threading.Thread(
+                    target=save_memory,
+                    args=(session_obj.user_email, updated_history, doc.original_filename),
+                    daemon=True,
+                ).start()
+                logger.info("Agent memory update scheduled | email=%s", session_obj.user_email)
+
         # ── [DONE] always sent regardless of DB save result ───────────────────
 
         yield "data: [DONE]\n\n"

@@ -8,7 +8,7 @@ from django import forms
 from django.contrib import admin
 from django.conf import settings
 
-from .models import Document, LLMConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification
+from .models import Document, LLMConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification, AgentMemory
 
 
 # ── Document (admin-managed) ───────────────────────────────────────────────────
@@ -493,3 +493,15 @@ class ChatMessageAdmin(admin.ModelAdmin):
     @admin.display(description="Cost (₹)")
     def total_cost_inr(self, obj):
         return f"₹{obj.total_cost:.4f}"
+
+
+@admin.register(AgentMemory)
+class AgentMemoryAdmin(admin.ModelAdmin):
+    list_display  = ("user_email", "total_sessions", "memory_preview", "last_updated")
+    search_fields = ("user_email",)
+    ordering      = ["-last_updated"]
+    readonly_fields = ("user_email", "total_sessions", "last_updated")
+
+    @admin.display(description="Memory")
+    def memory_preview(self, obj):
+        return obj.memory_text[:120] + "…" if len(obj.memory_text) > 120 else obj.memory_text
