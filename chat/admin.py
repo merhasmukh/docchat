@@ -64,6 +64,10 @@ class DocumentUploadForm(forms.ModelForm):
         data = super().clean()
         src = data.get("source_choice")
 
+        # Edit mode (existing document) — no source_choice submitted, skip upload validation
+        if not src:
+            return data
+
         if src == "file":
             f = data.get("upload_file")
             if not f:
@@ -102,6 +106,18 @@ class DocumentAdmin(admin.ModelAdmin):
     actions      = ["make_active"]
 
     # ── Field layout ──────────────────────────────────────────────────────────
+
+    def get_form(self, request, obj=None, **kwargs):
+        if obj:
+            # Change view — only is_active is editable; use a plain ModelForm
+            # to avoid validating the upload-specific fields on DocumentUploadForm.
+            class _ChangeForm(forms.ModelForm):
+                class Meta:
+                    model  = Document
+                    fields = ["is_active"]
+
+            return _ChangeForm
+        return super().get_form(request, obj, **kwargs)
 
     def get_fields(self, request, obj=None):
         if obj:

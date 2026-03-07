@@ -75,6 +75,21 @@ def _ocr_page_gemini_vision(image_path: str, client, model_name: str) -> str:
     return text
 
 
+def _extract_text_pdfplumber(pdf_path: str) -> list[dict]:
+    """
+    Extract text directly from a digital PDF using pdfplumber — no image
+    conversion, no model call, no OCR artifacts.
+    Returns one dict per page: {"page": N, "markdown": "..."}
+    """
+    import pdfplumber
+    page_entries = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for i, page in enumerate(pdf.pages, start=1):
+            text = page.extract_text() or ""
+            page_entries.append({"page": i, "markdown": text.strip()})
+    return page_entries
+
+
 def _has_text_layer(pdf_path: str, min_chars_per_page: int = 50) -> bool:
     """Return True when the PDF has a selectable text layer (digital PDF)."""
     try:
@@ -124,6 +139,30 @@ def convert_to_markdown(input_path: str) -> tuple[str, dict]:
     logger.info("OCR start | file=%s | engine=%s (config=%s)",
                 source_name, effective_engine, config.ocr_engine)
     ocr_total_start = time.perf_counter()
+
+    # ── PDF direct text extraction (no image conversion, no OCR) ────────────
+    if effective_engine == "pdftext":
+        if ext == ".pdf":
+            t0_pdf = time.perf_counter()
+            page_entries = _extract_text_pdfplumber(input_path)
+            combined = "\n\n---\n\n".join(
+                f"<!-- Page {e['page']} -->\n\n{e['markdown']}" for e in page_entries
+            )
+            logger.info(
+                "PDF-to-text complete | pages=%d | total_chars=%d | time=%.2fs",
+                len(page_entries), len(combined), time.perf_counter() - t0_pdf,
+            )
+            pages_data = {
+                "source_file": source_name,
+                "total_pages": len(page_entries),
+                "pages": page_entries,
+            }
+            return combined, pages_data
+        else:
+            logger.warning(
+                "pdftext engine selected but input is an image (%s); falling back to Tesseract", ext,
+            )
+            effective_engine = "tesseract"
 
     converter = DocumentConverter() if effective_engine == "docling" else None
     gemini_client = (

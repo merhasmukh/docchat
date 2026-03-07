@@ -158,6 +158,7 @@ class LLMConfig(models.Model):
         ("docling",       "Docling (digital PDFs)"),
         ("tesseract",     "Tesseract (scanned · Hindi + Gujarati + English)"),
         ("gemini_vision", "Gemini Vision (cloud · best quality for complex scans)"),
+        ("pdftext",       "PDF to Text (direct extraction · no OCR · fastest)"),
     ]
     RAG_EMBEDDING_CHOICES = [
         ("bm25",               "BM25 (keyword — English only, no cross-language)"),

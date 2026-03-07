@@ -29,12 +29,12 @@
   var server   = (s.getAttribute('data-server')   || '').replace(/\/$/, '');
   var position = s.getAttribute('data-position')  || 'bottom-right';
   var color    = s.getAttribute('data-color')     || '#432323';
-  var title    = s.getAttribute('data-title')     || 'DocChat';
+  var title    = s.getAttribute('data-title')     || 'Gujarat Vidyapith AI';
   var greeting = s.getAttribute('data-greeting')  || '';
   var mode     = s.getAttribute('data-mode')      || 'popup';
 
   if (!server) {
-    console.warn('[DocChat] data-server attribute is required.');
+    console.warn('[Gujarat Vidyapith AI] data-server attribute is required.');
     return;
   }
 

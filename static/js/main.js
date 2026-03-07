@@ -383,7 +383,8 @@ resetBtn.addEventListener("click", () => {
   chatWindow.innerHTML = `
     <div class="welcome-msg">
       <i class="fa-regular fa-comment-dots welcome-icon"></i>
-      <p>Document loaded. Ask me anything about it.</p>
+      <p>Ask me anything about the document</p>
+      <span class="welcome-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</span>
     </div>`;
 
   showUserModal();
