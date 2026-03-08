@@ -79,7 +79,7 @@ _LANG_HINT = (
 def _build_gemini_contents(question: str, history: list, lang_hint: bool = False) -> list:
     """Convert Ollama-style message history to Gemini Content objects."""
     contents = []
-    for m in history[-20:]:
+    for m in history[-10:]:
         role = "model" if m["role"] == "assistant" else m["role"]
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
     text = question + _LANG_HINT if lang_hint else question
@@ -94,8 +94,8 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     # ("Use ONLY the document context") cannot be overridden per-request.
     cached = cache_name is not None and not conversational
     logger.info(
-        "LLM stream start | provider=gemini | model=%s | history_turns=%d | q_chars=%d | cached=%s | conversational=%s",
-        model_name, len(history) // 2, len(question), cached, conversational,
+        "LLM stream start | provider=gemini | model=%s | history_turns=%d | q_chars=%d | ctx_chars=%d | explicit_cache=%s | conversational=%s",
+        model_name, len(history) // 2, len(question), len(markdown_text), cached, conversational,
     )
     t0 = time.perf_counter()
     output_chars = 0
@@ -137,19 +137,25 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
             logger.warning("Gemini cached stream failed: %s", exc)
         raise
     finally:
+        in_tokens  = 0
+        out_tokens = 0
+        auto_cached_tokens = 0
         if usage_out is not None and last_chunk is not None:
             meta = getattr(last_chunk, "usage_metadata", None)
             if meta:
-                usage_out["input_tokens"]         = meta.prompt_token_count or 0
-                usage_out["output_tokens"]        = meta.candidates_token_count or 0
-                usage_out["cached_input_tokens"]  = getattr(meta, "cached_content_token_count", None) or 0
+                in_tokens                         = meta.prompt_token_count or 0
+                out_tokens                        = meta.candidates_token_count or 0
+                auto_cached_tokens                = getattr(meta, "cached_content_token_count", None) or 0
+                usage_out["input_tokens"]         = in_tokens
+                usage_out["output_tokens"]        = out_tokens
+                usage_out["cached_input_tokens"]  = auto_cached_tokens
                 # Distinguish explicit cache (we created it) from Gemini's implicit/automatic
                 # caching.  Storage cost is only billable for explicit cache; implicit cache
                 # gives a read-rate discount with no storage charge.
                 usage_out["gemini_explicit_cache"] = cached
         logger.info(
-            "LLM stream done  | provider=gemini | model=%s | response_chars=%d | time=%.2fs | cached=%s",
-            model_name, output_chars, time.perf_counter() - t0, cached,
+            "LLM stream done  | provider=gemini | model=%s | in_tokens=%d auto_cached=%d out_tokens=%d | time=%.2fs | explicit_cache=%s",
+            model_name, in_tokens, auto_cached_tokens, out_tokens, time.perf_counter() - t0, cached,
         )
 
 

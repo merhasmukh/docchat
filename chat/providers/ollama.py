@@ -36,8 +36,8 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
 def _ask_streaming_ollama(question: str, history: list, markdown_text: str, model_name: str,
                            usage_out: dict | None = None):
     logger.info(
-        "LLM stream start | provider=ollama | model=%s | history_turns=%d | q_chars=%d | conversational=%s",
-        model_name, len(history) // 2, len(question), is_conversational(question),
+        "LLM stream start | provider=ollama | model=%s | history_turns=%d | q_chars=%d | ctx_chars=%d | conversational=%s",
+        model_name, len(history) // 2, len(question), len(markdown_text), is_conversational(question),
     )
     t0 = time.perf_counter()
     output_chars = 0
@@ -52,6 +52,9 @@ def _ask_streaming_ollama(question: str, history: list, markdown_text: str, mode
                 output_chars += len(token)
                 yield token
     finally:
+        input_tokens  = 0
+        output_tokens = 0
+        estimated     = False
         if usage_out is not None:
             input_tokens  = (last_chunk or {}).get("prompt_eval_count", 0)
             output_tokens = (last_chunk or {}).get("eval_count", 0)
@@ -59,12 +62,14 @@ def _ask_streaming_ollama(question: str, history: list, markdown_text: str, mode
                 input_chars   = sum(len(m.get("content", "")) for m in messages)
                 input_tokens  = max(1, input_chars // 4)
                 output_tokens = max(1, output_chars // 4)
+                estimated     = True
                 usage_out["estimated"] = True
             usage_out["input_tokens"]  = input_tokens
             usage_out["output_tokens"] = output_tokens
         logger.info(
-            "LLM stream done  | provider=ollama | model=%s | response_chars=%d | time=%.2fs",
-            model_name, output_chars, time.perf_counter() - t0,
+            "LLM stream done  | provider=ollama | model=%s | in_tokens=%d out_tokens=%d%s | time=%.2fs",
+            model_name, input_tokens, output_tokens, " (est)" if estimated else "",
+            time.perf_counter() - t0,
         )
 
 

@@ -54,7 +54,7 @@ class DocumentUploadForm(forms.ModelForm):
         initial="full",   # pre-select "Full Context" so the field is never blank
         choices=[
             ("full", "Full Context — send all text to the LLM in every request"),
-            ("rag",  "Chunked / RAG — split into ~3 000-character chunks and retrieve only relevant ones"),
+            ("rag",  "Chunked / RAG — split into ~1000-character chunks and retrieve only relevant ones"),
         ],
         widget=forms.RadioSelect,
     )

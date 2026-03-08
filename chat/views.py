@@ -646,10 +646,13 @@ def chat_view(request):
             return
 
         elapsed = time.perf_counter() - t0
-        response_chars = sum(len(t) for t in full_response)
         logger.info(
-            "Chat complete | session_pk=%d | response_chars=%d | time=%.2fs",
-            session_obj.pk, response_chars, elapsed,
+            "Chat complete | session_pk=%d | in_tokens=%d out_tokens=%d | ctx_chars=%d | time=%.2fs",
+            session_obj.pk,
+            usage_out.get("input_tokens", 0),
+            usage_out.get("output_tokens", 0),
+            len(markdown_text),
+            elapsed,
         )
 
         # ── Save cost record and message to DB ────────────────────────────────
@@ -698,10 +701,11 @@ def chat_view(request):
                 input_cost = output_cost = cache_read_cost = cache_storage_cost = Decimal(0)
             total_cost = input_cost + output_cost + cache_read_cost + cache_storage_cost
 
+            cache_label = "explicit_cached" if gemini_explicit_cache else "auto_cached"
             logger.info(
-                "Cost | session_pk=%d | provider=%s | model=%s | in=%d cached=%d out=%d est=%s | cost=₹%.6f (cache_read=₹%.6f storage=₹%.6f)",
+                "Cost | session_pk=%d | provider=%s | model=%s | in=%d %s=%d out=%d est=%s | cost=₹%.6f (cache_read=₹%.6f storage=₹%.6f)",
                 session_obj.pk, provider, model,
-                input_tokens, cached_input_tokens, output_tokens, estimated,
+                input_tokens, cache_label, cached_input_tokens, output_tokens, estimated,
                 total_cost, cache_read_cost, cache_storage_cost,
             )
 
