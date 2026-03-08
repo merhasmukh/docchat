@@ -71,24 +71,39 @@ let otpResendUsed     = false;
 // Track the active document filename
 let currentFilename = null;
 
-// ─── Page load: check active document + existing session token ────────────────
-(async function checkStatus() {
+// Session config (loaded from /session-config/ on page load)
+let sessionCfg = { collect_name: true, collect_email: true, verify_email: true };
+
+// ─── Page load: fetch session config + check active document + session ─────────
+(async function init() {
+  // Fetch config and status in parallel
+  const [cfgResult, statusResult] = await Promise.allSettled([
+    fetch("/session-config/"),
+    fetch("/status/", { headers: apiHeaders() }),
+  ]);
+
+  if (cfgResult.status === "fulfilled" && cfgResult.value.ok) {
+    try { sessionCfg = await cfgResult.value.json(); } catch (_) {}
+  }
+
   let documentLoaded = false;
   let sessionActive  = false;
-  try {
-    const res  = await fetch("/status/", { headers: apiHeaders() });
-    const data = await res.json();
-    documentLoaded  = data.document_loaded;
-    currentFilename = data.filename;
-    sessionActive   = data.session_active;
-  } catch (_) {
-    // Network error — treat as no document
+  if (statusResult.status === "fulfilled") {
+    try {
+      const data = await statusResult.value.json();
+      documentLoaded  = data.document_loaded;
+      currentFilename = data.filename;
+      sessionActive   = data.session_active;
+    } catch (_) {}
   }
 
   if (documentLoaded) {
     if (sessionActive) {
       showChatMode(currentFilename);
-      loadHistory();           // re-render previous messages from DB
+      loadHistory();
+    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email) {
+      // Anonymous mode — create session immediately, no modal needed
+      await createDirectSession({});
     } else {
       showUserModal();
     }
@@ -146,6 +161,12 @@ function showUserModal() {
     docIndicatorTxt.textContent = currentFilename;
     docIndicator.classList.add("loaded");
   }
+  // Show/hide fields based on admin config
+  const nameField  = document.getElementById("um-field-name");
+  const emailField = document.getElementById("um-field-email");
+  if (nameField)  nameField.style.display  = sessionCfg.collect_name  ? "" : "none";
+  if (emailField) emailField.style.display = sessionCfg.collect_email ? "" : "none";
+
   // Always reset to step 1
   showOtpStep(1);
   nameInput.value  = "";
@@ -154,7 +175,7 @@ function showUserModal() {
   modalSubmitBtn.disabled = false;
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
   userModal.classList.remove("hidden");
-  nameInput.focus();
+  (sessionCfg.collect_name ? nameInput : emailInput).focus();
 }
 
 function showOtpStep(step) {
@@ -201,18 +222,39 @@ function stopOtpCountdown() {
   }
 }
 
-// ─── Step 1: submit name + email → request OTP ────────────────────────────────
+// ─── Direct session creation (no OTP) ─────────────────────────────────────────
+async function createDirectSession(payload) {
+  try {
+    const res  = await fetch("/start-session/", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body:    JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.status === "ok") {
+      setToken(data.token);
+      showChatMode(currentFilename);
+      return true;
+    } else {
+      return { error: data.message || "Failed to start session. Please try again." };
+    }
+  } catch (_) {
+    return { error: "Network error. Please try again." };
+  }
+}
+
+// ─── Step 1: submit name + email → OTP or direct session ──────────────────────
 userForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name  = nameInput.value.trim();
   const email = emailInput.value.trim();
 
-  if (!name) {
+  if (sessionCfg.collect_name && !name) {
     modalError.textContent = "Please enter your name.";
     modalError.classList.remove("hidden");
     return;
   }
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (sessionCfg.collect_email && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     modalError.textContent = "Please enter a valid email address.";
     modalError.classList.remove("hidden");
     return;
@@ -220,6 +262,24 @@ userForm.addEventListener("submit", async (e) => {
 
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = true;
+
+  // ── Direct session (no OTP) ──────────────────────────────────────────────────
+  if (!sessionCfg.collect_email || !sessionCfg.verify_email) {
+    modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
+    const payload = {};
+    if (sessionCfg.collect_name)  payload.name  = name;
+    if (sessionCfg.collect_email) payload.email = email;
+    const result = await createDirectSession(payload);
+    if (result !== true) {
+      modalError.textContent = result.error;
+      modalError.classList.remove("hidden");
+      modalSubmitBtn.disabled = false;
+      modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+    }
+    return;
+  }
+
+  // ── OTP flow ─────────────────────────────────────────────────────────────────
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending code…';
 
   try {

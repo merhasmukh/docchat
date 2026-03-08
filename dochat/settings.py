@@ -160,6 +160,7 @@ LOGGING = {
 # ── Custom app settings ────────────────────────────────────────────────────
 UPLOAD_FOLDER = BASE_DIR / "uploads"
 MARKDOWN_FOLDER = BASE_DIR / "markdown_cache"
+QDRANT_PATH = BASE_DIR / "qdrant_storage"
 
 # Docs with character count below this threshold use full-context mode
 # (with Gemini context caching). Larger docs fall back to BM25 RAG retrieval.
@@ -171,4 +172,5 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
 # ── Startup: ensure required directories exist ─────────────────────────────
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(MARKDOWN_FOLDER, exist_ok=True)
+os.makedirs(QDRANT_PATH, exist_ok=True)
 # Note: no automatic cleanup — admin-managed document files must persist indefinitely.

@@ -20,7 +20,11 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
     constrained_question = (
         f"{question}\n\n"
         "[IMPORTANT: Answer using ONLY the document context in the system prompt. "
-        "If the answer is not there, say so — do not use outside knowledge.]"
+        "If the answer is not there, say so — do not use outside knowledge.]\n"
+        "[CRITICAL LANGUAGE RULE: Reply in the exact same language as the question above. "
+        "Gujarati words/script → reply in Gujarati (keep English acronyms as-is). "
+        "Hindi/Devanagari words → reply in Hindi. English only → reply in English. "
+        "NEVER translate a Gujarati or Hindi question into English.]"
     )
     return (
         [{"role": "system", "content": DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]

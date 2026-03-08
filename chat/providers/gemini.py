@@ -67,13 +67,23 @@ def delete_gemini_cache(cache_name: str) -> None:
 
 # ── Chat helpers ───────────────────────────────────────────────────────────────
 
-def _build_gemini_contents(question: str, history: list) -> list:
+_LANG_HINT = (
+    "\n\n[CRITICAL LANGUAGE RULE: Your reply MUST be in the exact same language as the question above. "
+    "If the question has Gujarati words/script → reply in Gujarati (keep English acronyms as-is). "
+    "If the question has Hindi/Devanagari words → reply in Hindi. "
+    "If the question is English only → reply in English. "
+    "NEVER translate a Gujarati or Hindi question into English.]"
+)
+
+
+def _build_gemini_contents(question: str, history: list, lang_hint: bool = False) -> list:
     """Convert Ollama-style message history to Gemini Content objects."""
     contents = []
     for m in history[-20:]:
         role = "model" if m["role"] == "assistant" else m["role"]
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
-    contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=question)]))
+    text = question + _LANG_HINT if lang_hint else question
+    contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=text)]))
     return contents
 
 
@@ -90,7 +100,7 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     t0 = time.perf_counter()
     output_chars = 0
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    contents = _build_gemini_contents(question, history)
+    contents = _build_gemini_contents(question, history, lang_hint=not conversational)
 
     if conversational:
         llm_config = genai_types.GenerateContentConfig(system_instruction=CONVERSATIONAL_SYSTEM_PROMPT)
@@ -151,7 +161,7 @@ def _ask_gemini(question: str, history: list, markdown_text: str, model_name: st
     else:
         system = DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
     config = genai_types.GenerateContentConfig(system_instruction=system)
-    contents = _build_gemini_contents(question, history)
+    contents = _build_gemini_contents(question, history, lang_hint=not is_conversational(question))
     t0 = time.perf_counter()
     response = client.models.generate_content(model=model_name, contents=contents, config=config)
     elapsed = time.perf_counter() - t0

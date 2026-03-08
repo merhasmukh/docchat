@@ -6,7 +6,6 @@ Tools are called by the ReAct agent loop when the LLM emits a TOOL_CALL directiv
 """
 import json
 import logging
-from pathlib import Path
 
 logger = logging.getLogger("chat.pipeline")
 
@@ -16,19 +15,21 @@ def search_document(query: str, doc, cfg) -> str:
     Semantic / BM25 search over the document's RAG chunks.
     Returns the top-3 most relevant pages (same format as RAG context mode).
     """
-    if not doc.rag_chunks_path or not Path(doc.rag_chunks_path).exists():
+    if not doc.qdrant_collection:
         return "Document search is unavailable (no chunks found). Try get_page() instead."
-    from chat.pipeline import retrieve_relevant_context
-    result = retrieve_relevant_context(query, doc.rag_chunks_path, cfg.rag_embedding, top_k=3)
+    from chat.pipeline import retrieve_relevant_context_qdrant
+    result = retrieve_relevant_context_qdrant(query, doc.qdrant_collection, cfg.rag_embedding, top_k=3)
     return result or "No relevant content found for that query."
 
 
 def get_page(page_number: int, doc) -> str:
     """Return the full markdown text of a specific page."""
-    if not doc.json_path or not Path(doc.json_path).exists():
+    import os
+    if not doc.json_path or not os.path.exists(doc.json_path):
         return "Document page data is unavailable."
     try:
-        pages_data = json.loads(Path(doc.json_path).read_text(encoding="utf-8"))
+        with open(doc.json_path, encoding="utf-8") as f:
+            pages_data = json.load(f)
         page = next((p for p in pages_data["pages"] if p["page"] == page_number), None)
         if page:
             return page["markdown"]

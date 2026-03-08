@@ -1,14 +1,17 @@
 import json
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
 
+logger = logging.getLogger("chat.admin")
+
 from django import forms
 from django.contrib import admin
 from django.conf import settings
 
-from .models import Document, LLMConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification, AgentMemory
+from .models import Document, LLMConfig, ChatSessionConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification, AgentMemory
 
 
 # ── Document (admin-managed) ───────────────────────────────────────────────────
@@ -125,7 +128,7 @@ class DocumentAdmin(admin.ModelAdmin):
                 "source_type", "original_filename", "status", "error_message",
                 "total_pages", "char_count", "context_mode",
                 "is_active",
-                "markdown_path", "json_path", "rag_chunks_path", "gemini_cache_name",
+                "markdown_path", "json_path", "qdrant_collection", "gemini_cache_name",
                 "created_at",
             )
         # Add form — show all source-selection fields
@@ -136,7 +139,7 @@ class DocumentAdmin(admin.ModelAdmin):
             return (
                 "source_type", "original_filename", "status", "error_message",
                 "total_pages", "char_count", "context_mode",
-                "markdown_path", "json_path", "rag_chunks_path", "gemini_cache_name",
+                "markdown_path", "json_path", "qdrant_collection", "gemini_cache_name",
                 "created_at",
             )
         return ()
@@ -168,14 +171,13 @@ class DocumentAdmin(admin.ModelAdmin):
         base_id       = str(uuid.uuid4())
         md_path       = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".md")
         json_path     = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".json")
-        chunks_path   = os.path.join(settings.MARKDOWN_FOLDER, base_id + "_chunks.json")
-
         obj.original_filename = form.cleaned_data["doc_label"].strip()
         obj.source_type       = "text"
         obj.status            = "pending"
         super().save_model(request, obj, form, change)   # persist → get pk
 
         try:
+            os.makedirs(settings.MARKDOWN_FOLDER, exist_ok=True)
             with open(md_path, "w", encoding="utf-8") as fh:
                 fh.write(markdown_text)
 
@@ -193,8 +195,9 @@ class DocumentAdmin(admin.ModelAdmin):
 
             cfg    = LLMConfig.get_active()
             chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
-            with open(chunks_path, "w", encoding="utf-8") as fh:
-                json.dump(chunks, fh, ensure_ascii=False)
+            from .pipeline import store_rag_chunks_qdrant
+            collection_name = f"doc_{obj.pk}"
+            store_rag_chunks_qdrant(chunks, collection_name, cfg.rag_embedding)
 
             gemini_cache_name = None
             if mode_choice == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
@@ -202,7 +205,7 @@ class DocumentAdmin(admin.ModelAdmin):
 
             obj.markdown_path     = md_path
             obj.json_path         = json_path
-            obj.rag_chunks_path   = chunks_path
+            obj.qdrant_collection = collection_name
             obj.gemini_cache_name = gemini_cache_name or ""
             obj.char_count        = len(markdown_text)
             obj.total_pages       = pages_data["total_pages"]
@@ -232,6 +235,8 @@ class DocumentAdmin(admin.ModelAdmin):
 
         ext         = Path(uploaded_file.name).suffix.lower()
         safe_name   = str(uuid.uuid4()) + ext
+        os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
+        os.makedirs(settings.MARKDOWN_FOLDER, exist_ok=True)
         upload_path = os.path.join(settings.UPLOAD_FOLDER, safe_name)
 
         with open(upload_path, "wb") as fh:
@@ -268,9 +273,9 @@ class DocumentAdmin(admin.ModelAdmin):
 
             cfg    = LLMConfig.get_active()
             chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
-            rag_chunks_path = os.path.join(settings.MARKDOWN_FOLDER, base_id + "_chunks.json")
-            with open(rag_chunks_path, "w", encoding="utf-8") as fh:
-                json.dump(chunks, fh, ensure_ascii=False)
+            from .pipeline import store_rag_chunks_qdrant
+            collection_name = f"doc_{obj.pk}"
+            store_rag_chunks_qdrant(chunks, collection_name, cfg.rag_embedding)
 
             gemini_cache_name = None
             if context_mode == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
@@ -278,7 +283,7 @@ class DocumentAdmin(admin.ModelAdmin):
 
             obj.markdown_path     = md_path
             obj.json_path         = json_path
-            obj.rag_chunks_path   = rag_chunks_path
+            obj.qdrant_collection = collection_name
             obj.gemini_cache_name = gemini_cache_name or ""
             obj.total_pages       = pages_data["total_pages"]
             obj.char_count        = doc_chars
@@ -324,10 +329,16 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def _cleanup_document(self, doc):
         from .providers.gemini import delete_gemini_cache
+        from .pipeline import get_qdrant_client
         for path_field in ("markdown_path", "json_path", "rag_chunks_path"):
             path = getattr(doc, path_field, "")
             if path and os.path.exists(path):
                 os.remove(path)
+        if doc.qdrant_collection:
+            try:
+                get_qdrant_client().delete_collection(doc.qdrant_collection)
+            except Exception as exc:
+                logger.warning("Failed to delete Qdrant collection %s: %s", doc.qdrant_collection, exc)
         if doc.gemini_cache_name:
             delete_gemini_cache(doc.gemini_cache_name)
 
@@ -390,6 +401,27 @@ class LLMConfigAdmin(admin.ModelAdmin):
         from django.utils.html import format_html
         url = reverse("admin:chat_llmconfig_widget_script")
         return format_html('<a href="{}">📋 Get embed script</a>', url)
+
+
+# ── Chat Session Config ────────────────────────────────────────────────────────
+
+@admin.register(ChatSessionConfig)
+class ChatSessionConfigAdmin(admin.ModelAdmin):
+    fieldsets = [
+        ("User Info Collection", {
+            "fields": ("collect_name", "collect_email", "verify_email"),
+            "description": (
+                "Control what information users must provide before starting a chat. "
+                "Disabling collection reduces friction and improves user retention."
+            ),
+        }),
+    ]
+
+    def has_add_permission(self, request):
+        return not ChatSessionConfig.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 # ── Model Pricing ──────────────────────────────────────────────────────────────

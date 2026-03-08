@@ -50,6 +50,7 @@
   var countdownTimer = null;
   var isStreaming    = false;
   var greetingShown  = false;
+  var sessionCfg     = { collect_name: true, collect_email: true, verify_email: true };
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function getCookie(name) {
@@ -102,6 +103,15 @@
 
   function showAuthStep1() {
     clearError(elAuthErr);
+    // Show/hide fields based on admin config
+    var fieldName  = document.getElementById('wg-field-name');
+    var fieldEmail = document.getElementById('wg-field-email');
+    if (fieldName)  fieldName.style.display  = sessionCfg.collect_name  ? '' : 'none';
+    if (fieldEmail) fieldEmail.style.display = sessionCfg.collect_email ? '' : 'none';
+    // Adjust button label
+    elReqBtn.textContent = (sessionCfg.collect_email && sessionCfg.verify_email)
+      ? 'Send verification code'
+      : 'Start Chat';
     show(elStep1); hide(elStep2);
     show(elAuth); hide(elChat); hide(elInputBar); hide(elNodoc);
   }
@@ -165,29 +175,45 @@
     }
   }
 
-  // ── Init: status check ─────────────────────────────────────────────────────
+  // ── Init: fetch session config + status check ──────────────────────────────
   elTitle.textContent = TITLE;
 
-  fetch('/status/', { headers: apiHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (!data.document_loaded) {
-        showNodoc();
-        return;
-      }
+  Promise.allSettled([
+    fetch('/session-config/'),
+    fetch('/status/', { headers: apiHeaders() }),
+  ]).then(function (results) {
+    var cfgRes    = results[0];
+    var statusRes = results[1];
 
-      // elDocName.textContent = data.filename || '';
-      // show(elDocBadge);
+    var cfgPromise = (cfgRes.status === 'fulfilled' && cfgRes.value.ok)
+      ? cfgRes.value.json().catch(function () { return sessionCfg; })
+      : Promise.resolve(sessionCfg);
 
-      var token = localStorage.getItem(TOKEN_KEY);
-      if (token && data.session_active) {
-        loadHistory();
+    var statusPromise = (statusRes.status === 'fulfilled')
+      ? statusRes.value.json().catch(function () { return {}; })
+      : Promise.resolve({});
+
+    return Promise.all([cfgPromise, statusPromise]);
+  }).then(function (vals) {
+    var cfg  = vals[0];
+    var data = vals[1];
+    sessionCfg = cfg;
+
+    if (!data.document_loaded) { showNodoc(); return; }
+
+    var token = localStorage.getItem(TOKEN_KEY);
+    if (token && data.session_active) {
+      loadHistory();
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+      if (!sessionCfg.collect_name && !sessionCfg.collect_email) {
+        // Anonymous — create session immediately
+        createDirectSession({});
       } else {
-        localStorage.removeItem(TOKEN_KEY);
         showAuthStep1();
       }
-    })
-    .catch(function () { showNodoc(); });
+    }
+  }).catch(function () { showNodoc(); });
 
   // ── Load history ───────────────────────────────────────────────────────────
   function loadHistory() {
@@ -214,17 +240,52 @@
       });
   }
 
-  // ── OTP Step 1: request code ───────────────────────────────────────────────
+  // ── Direct session (no OTP) ────────────────────────────────────────────────
+  function createDirectSession(payload) {
+    fetch('/start-session/', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify(payload),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.status === 'ok') {
+          localStorage.setItem(TOKEN_KEY, data.token);
+          elMessages.innerHTML = '';
+          maybeShowGreeting();
+          showChat();
+        } else {
+          showError(elAuthErr, data.message || 'Failed to start session. Please try again.');
+          setLoading(elReqBtn, false);
+        }
+      })
+      .catch(function () {
+        showError(elAuthErr, 'Network error. Please try again.');
+        setLoading(elReqBtn, false);
+      });
+  }
+
+  // ── Step 1: submit → OTP or direct session ─────────────────────────────────
   elReqBtn.addEventListener('click', function () {
     var name  = elName.value.trim();
     var email = elEmail.value.trim();
     clearError(elAuthErr);
 
-    if (!name)  return showError(elAuthErr, 'Please enter your name.');
-    if (!email) return showError(elAuthErr, 'Please enter your email address.');
+    if (sessionCfg.collect_name  && !name)  return showError(elAuthErr, 'Please enter your name.');
+    if (sessionCfg.collect_email && !email) return showError(elAuthErr, 'Please enter your email address.');
 
     setLoading(elReqBtn, true);
 
+    // ── Direct session (no OTP needed) ──────────────────────────────────────
+    if (!sessionCfg.collect_email || !sessionCfg.verify_email) {
+      var payload = {};
+      if (sessionCfg.collect_name)  payload.name  = name;
+      if (sessionCfg.collect_email) payload.email = email;
+      createDirectSession(payload);
+      return;
+    }
+
+    // ── OTP flow ─────────────────────────────────────────────────────────────
     fetch('/request-otp/', {
       method: 'POST',
       headers: apiHeaders(),

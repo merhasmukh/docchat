@@ -21,7 +21,7 @@ from drf_spectacular.utils import (
 from drf_spectacular.types import OpenApiTypes
 import rest_framework.serializers as s
 
-from .pipeline import ask_streaming, retrieve_relevant_context
+from .pipeline import ask_streaming
 
 logger = logging.getLogger("chat.views")
 
@@ -366,6 +366,52 @@ def resend_otp_view(request):
     return Response({"status": "ok"})
 
 
+# ── Session Config ─────────────────────────────────────────────────────────────
+
+@api_view(["GET"])
+def session_config_view(request):
+    """Return admin-controlled settings for the user info collection modal."""
+    from .models import ChatSessionConfig
+    cfg = ChatSessionConfig.get_active()
+    return Response({
+        "collect_name":  cfg.collect_name,
+        "collect_email": cfg.collect_email,
+        "verify_email":  cfg.verify_email,
+    })
+
+
+@api_view(["POST"])
+def start_session_view(request):
+    """
+    Create a ChatSession directly without email OTP verification.
+    Used when verify_email is disabled or no user info is collected at all.
+    """
+    from .models import ChatSessionConfig, ChatSession
+    cfg = ChatSessionConfig.get_active()
+
+    # Guard: if OTP verification is required, this endpoint must not be used
+    if cfg.collect_email and cfg.verify_email:
+        return Response(
+            {"status": "error", "message": "Use /request-otp/ for email verification."},
+            status=400,
+        )
+
+    name  = (request.data.get("name")  or "").strip()
+    email = (request.data.get("email") or "").strip().lower()
+
+    if cfg.collect_name and not name:
+        return Response({"status": "error", "message": "Name is required."}, status=400)
+    if cfg.collect_email and not email:
+        return Response({"status": "error", "message": "Email is required."}, status=400)
+
+    session = ChatSession.objects.create(
+        session_key=str(uuid.uuid4()),
+        user_name=name   if cfg.collect_name  else "",
+        user_email=email if cfg.collect_email else "",
+    )
+    return Response({"status": "ok", "token": session.session_key})
+
+
 # ── Chat (SSE streaming) ───────────────────────────────────────────────────────
 @extend_schema(
     tags=["chat"],
@@ -446,7 +492,7 @@ def chat_view(request):
         len(history) // 2, doc.original_filename, doc.context_mode,
     )
 
-    rag_chunks_path   = doc.rag_chunks_path
+    qdrant_collection = doc.qdrant_collection
     md_path           = doc.markdown_path
 
     # Resolve effective context for the LLM
@@ -487,7 +533,21 @@ def chat_view(request):
             logger.warning("Lazy Gemini cache creation failed | doc_pk=%d | error=%s", doc.pk, _exc)
     # ───────────────────────────────────────────────────────────────────────────
 
-    has_chunks = bool(rag_chunks_path and os.path.exists(rag_chunks_path))
+    has_chunks = bool(qdrant_collection)
+
+    def _rag_query(q: str, hist: list) -> str:
+        """
+        For short follow-up questions (≤ 8 words) prepend the last user turn so
+        the RAG retriever has enough context to find the right chunks.
+        e.g. "ok for mca?" → "BCA ma admission leva su joyeye ok for mca?"
+        """
+        if len(q.split()) <= 3 and hist:
+            last_user = next(
+                (m["content"] for m in reversed(hist) if m["role"] == "user"), None
+            )
+            if last_user:
+                return f"{last_user} {q}"
+        return q
 
     # ── Agent mode: load memory; context is resolved inside the agent loop ──────
     user_memory = ""
@@ -496,7 +556,10 @@ def chat_view(request):
         user_memory = load_memory(session_obj.user_email)
         markdown_text = ""  # agent loop handles context retrieval via tools
     elif context_mode == "rag" and has_chunks:
-        markdown_text = retrieve_relevant_context(question, rag_chunks_path, rag_embedding)
+        from .pipeline import retrieve_relevant_context_qdrant
+        markdown_text = retrieve_relevant_context_qdrant(
+            _rag_query(question, history), qdrant_collection, rag_embedding
+        )
 
     elif cfg_active.provider == "sarvam":
         if _is_conversational(question):
@@ -509,8 +572,9 @@ def chat_view(request):
             if len(full_text) <= _SARVAM_BUDGET:
                 markdown_text = full_text
             elif has_chunks:
-                markdown_text = retrieve_relevant_context(
-                    question, rag_chunks_path, rag_embedding, top_k=3
+                from .pipeline import retrieve_relevant_context_qdrant
+                markdown_text = retrieve_relevant_context_qdrant(
+                    _rag_query(question, history), qdrant_collection, rag_embedding, top_k=3
                 )
             else:
                 markdown_text = full_text[:_SARVAM_BUDGET]

@@ -121,7 +121,8 @@ class Document(models.Model):
     source_type       = models.CharField(max_length=10, choices=SOURCE_CHOICES, default="file")
     markdown_path     = models.CharField(max_length=500, blank=True)
     json_path         = models.CharField(max_length=500, blank=True)
-    rag_chunks_path   = models.CharField(max_length=500, blank=True)
+    rag_chunks_path   = models.CharField(max_length=500, blank=True)   # legacy — no longer written
+    qdrant_collection = models.CharField(max_length=100, blank=True)
     gemini_cache_name = models.CharField(max_length=200, blank=True)
     total_pages       = models.IntegerField(default=0)
     char_count        = models.IntegerField(default=0)
@@ -244,6 +245,47 @@ class LLMConfig(models.Model):
         else:
             llm = f"Ollama/{self.ollama_model}"
         return f"{llm} | OCR: {self.get_ocr_engine_display()}"
+
+    @classmethod
+    def get_active(cls):
+        """Return the singleton config, creating defaults if none exists."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+# ── Chat Session Configuration ─────────────────────────────────────────────────
+
+class ChatSessionConfig(models.Model):
+    """
+    Singleton admin config controlling what user info is collected before chat.
+    Defaults preserve existing behaviour (name + email + OTP).
+    """
+    collect_name = models.BooleanField(
+        default=True,
+        help_text="Ask users for their name before starting a chat.",
+    )
+    collect_email = models.BooleanField(
+        default=True,
+        help_text="Ask users for their email address before starting a chat.",
+    )
+    verify_email = models.BooleanField(
+        default=True,
+        help_text=(
+            "Require email OTP verification. Only applies when 'Collect email' is enabled. "
+            "Disable to collect email without sending a verification code."
+        ),
+    )
+
+    class Meta:
+        verbose_name        = "Chat Session Configuration"
+        verbose_name_plural = "Chat Session Configuration"
+
+    def __str__(self):
+        parts = []
+        if self.collect_name:  parts.append("name")
+        if self.collect_email: parts.append("email")
+        if self.collect_email and self.verify_email: parts.append("+OTP")
+        return "Collect: " + (", ".join(parts) if parts else "none (anonymous)")
 
     @classmethod
     def get_active(cls):

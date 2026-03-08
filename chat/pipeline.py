@@ -265,7 +265,111 @@ def _cosine_scores(query_emb: list[float], chunk_embs: list[list[float]]) -> lis
     return (C @ q).tolist()
 
 
-def split_text_into_pages(text: str, chunk_size: int = 3_000) -> dict:
+# ── Qdrant vector store ────────────────────────────────────────────────────────
+
+_qdrant_client = None
+
+_EMBEDDING_DIMS = {
+    "multilingual_local": 384,
+    "gemini_embedding":   768,
+    "bm25":               1,    # dummy — text stored in payload, BM25 in-memory
+}
+
+
+def get_qdrant_client():
+    """Return a process-level singleton Qdrant client (embedded, local disk)."""
+    global _qdrant_client
+    if _qdrant_client is None:
+        from django.conf import settings
+        from qdrant_client import QdrantClient
+        Path(settings.QDRANT_PATH).mkdir(parents=True, exist_ok=True)
+        _qdrant_client = QdrantClient(path=str(settings.QDRANT_PATH))
+        logger.info("Qdrant client initialised at %s", settings.QDRANT_PATH)
+    return _qdrant_client
+
+
+def store_rag_chunks_qdrant(chunks: list[dict], collection_name: str, embedding_method: str) -> None:
+    """
+    Upsert chunks into a Qdrant collection.
+    - For vector methods: stores actual embedding vectors.
+    - For BM25: stores a dummy [0.0] vector; text lives in payload only.
+    """
+    from qdrant_client.models import Distance, VectorParams, PointStruct
+
+    client = get_qdrant_client()
+    dim    = _EMBEDDING_DIMS.get(embedding_method, 384)
+
+    client.recreate_collection(
+        collection_name=collection_name,
+        vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+    )
+
+    points = [
+        PointStruct(
+            id=i,
+            vector=chunk.get("embedding") or [0.0],
+            payload={"page": chunk["page"], "text": chunk["text"]},
+        )
+        for i, chunk in enumerate(chunks)
+    ]
+
+    if points:
+        client.upsert(collection_name=collection_name, points=points)
+
+    logger.info(
+        "Qdrant upsert | collection=%s | method=%s | points=%d",
+        collection_name, embedding_method, len(points),
+    )
+
+
+def retrieve_relevant_context_qdrant(question: str, collection_name: str,
+                                      embedding_method: str = "bm25", top_k: int = 3) -> str:
+    """
+    Retrieve the top-k most relevant chunks from Qdrant.
+    - Vector methods: cosine similarity search.
+    - BM25: fetch all points via scroll, compute BM25 in-memory.
+    """
+    client = get_qdrant_client()
+
+    if embedding_method == "bm25":
+        all_points, _ = client.scroll(
+            collection_name=collection_name, with_payload=True, limit=10_000
+        )
+        chunks    = [{"page": p.payload["page"], "text": p.payload["text"]} for p in all_points]
+        tokenized = [c["text"].lower().split() for c in chunks]
+        scores    = BM25Okapi(tokenized).get_scores(question.lower().split())
+        ranked    = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        selected  = sorted(ranked)
+        result    = "\n\n---\n\n".join(
+            f"<!-- Page {chunks[i]['page']} -->\n\n{chunks[i]['text']}" for i in selected
+        )
+        method_used = "bm25"
+    else:
+        q_emb = (
+            _embed_local([question])[0]
+            if embedding_method == "multilingual_local"
+            else _embed_gemini([question])[0]
+        )
+        hits = client.query_points(
+            collection_name=collection_name,
+            query=q_emb,
+            limit=top_k,
+            with_payload=True,
+        ).points
+        hits.sort(key=lambda p: p.payload["page"])
+        result      = "\n\n---\n\n".join(
+            f"<!-- Page {p.payload['page']} -->\n\n{p.payload['text']}" for p in hits
+        )
+        method_used = "embedding"
+
+    logger.info(
+        "Qdrant RAG | method=%s | collection=%s | q_chars=%d | top_k=%d",
+        method_used, collection_name, len(question), top_k,
+    )
+    return result
+
+
+def split_text_into_pages(text: str, chunk_size: int = 1_000) -> dict:
     """
     Split plain pasted text into synthetic 'pages' for RAG embedding.
 
