@@ -7,8 +7,8 @@ from google.genai import types as genai_types
 
 from .utils import (
     CONVERSATIONAL_SYSTEM_PROMPT,
-    DOCUMENT_SYSTEM_INSTRUCTION,
-    DOCUMENT_SYSTEM_PROMPT,
+    build_document_instruction,
+    build_document_prompt,
     is_conversational,
 )
 
@@ -17,6 +17,10 @@ logger = logging.getLogger("chat.pipeline")
 
 class GeminiCacheExpiredError(Exception):
     """Raised when a Gemini cached content is not found or has expired (HTTP 403)."""
+
+
+class GeminiUnavailableError(Exception):
+    """Raised when Gemini returns 503 UNAVAILABLE (high demand / temporary outage)."""
 
 
 # ── Context cache ──────────────────────────────────────────────────────────────
@@ -35,7 +39,7 @@ def create_gemini_cache(markdown_text: str, model_name: str) -> str | None:
         cache = client.caches.create(
             model=model_name,
             config=genai_types.CreateCachedContentConfig(
-                system_instruction=DOCUMENT_SYSTEM_INSTRUCTION,
+                system_instruction=build_document_instruction(),
                 contents=[
                     genai_types.Content(
                         role="user",
@@ -88,7 +92,8 @@ def _build_gemini_contents(question: str, history: list, lang_hint: bool = False
 
 
 def _ask_streaming_gemini(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None, cache_name: str | None = None):
+                           usage_out: dict | None = None, cache_name: str | None = None,
+                           fallback_contact: str = ""):
     conversational = is_conversational(question)
     # Bypass cache for conversational messages — the cache's system_instruction
     # ("Use ONLY the document context") cannot be overridden per-request.
@@ -105,9 +110,18 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     if conversational:
         llm_config = genai_types.GenerateContentConfig(system_instruction=CONVERSATIONAL_SYSTEM_PROMPT)
     elif cached:
-        llm_config = genai_types.GenerateContentConfig(cached_content=cache_name)
+        # For cached path: inject fallback_contact as an additional per-request
+        # system instruction on top of the baked-in cache instruction.
+        extra = (
+            build_document_instruction(fallback_contact)
+            if fallback_contact else None
+        )
+        llm_config = genai_types.GenerateContentConfig(
+            cached_content=cache_name,
+            **({"system_instruction": extra} if extra else {}),
+        )
     else:
-        system = DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
+        system = build_document_prompt(markdown_text, fallback_contact)
         llm_config = genai_types.GenerateContentConfig(system_instruction=system)
 
     last_chunk = None
@@ -121,18 +135,22 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
                 output_chars += len(token)
                 yield token
     except Exception as exc:
+        exc_str = str(exc)
         if cached and (
-            "403" in str(exc)
-            or "PERMISSION_DENIED" in str(exc)
-            or "CachedContent not found" in str(exc)
+            "403" in exc_str
+            or "PERMISSION_DENIED" in exc_str
+            or "CachedContent not found" in exc_str
             or (
-                "400" in str(exc)
-                and "INVALID_ARGUMENT" in str(exc)
-                and "CachedContent" in str(exc)
+                "400" in exc_str
+                and "INVALID_ARGUMENT" in exc_str
+                and "CachedContent" in exc_str
             )
         ):
             logger.warning("Gemini cache invalid (expired or model mismatch), will recache: %s", exc)
-            raise GeminiCacheExpiredError(str(exc)) from exc
+            raise GeminiCacheExpiredError(exc_str) from exc
+        if "503" in exc_str or "UNAVAILABLE" in exc_str:
+            logger.warning("Gemini model %s unavailable (503): %s", model_name, exc)
+            raise GeminiUnavailableError(exc_str) from exc
         if cached:
             logger.warning("Gemini cached stream failed: %s", exc)
         raise
@@ -159,13 +177,14 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
         )
 
 
-def _ask_gemini(question: str, history: list, markdown_text: str, model_name: str) -> tuple[str, float]:
+def _ask_gemini(question: str, history: list, markdown_text: str, model_name: str,
+                fallback_contact: str = "") -> tuple[str, float]:
     logger.info("LLM ask | provider=gemini | model=%s", model_name)
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     if is_conversational(question):
         system = CONVERSATIONAL_SYSTEM_PROMPT
     else:
-        system = DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)
+        system = build_document_prompt(markdown_text, fallback_contact)
     config = genai_types.GenerateContentConfig(system_instruction=system)
     contents = _build_gemini_contents(question, history, lang_hint=not is_conversational(question))
     t0 = time.perf_counter()

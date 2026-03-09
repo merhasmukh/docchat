@@ -3,10 +3,11 @@ import time
 
 import ollama
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, DOCUMENT_SYSTEM_PROMPT, is_conversational
+from .utils import CONVERSATIONAL_SYSTEM_PROMPT, build_document_prompt, is_conversational
 
 
-def _build_messages(question: str, history: list, markdown_text: str) -> list:
+def _build_messages(question: str, history: list, markdown_text: str,
+                    fallback_contact: str = "") -> list:
     trimmed_history = history[-40:]
 
     if is_conversational(question):
@@ -27,21 +28,21 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
         "NEVER translate a Gujarati or Hindi question into English.]"
     )
     return (
-        [{"role": "system", "content": DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
+        [{"role": "system", "content": build_document_prompt(markdown_text, fallback_contact)}]
         + trimmed_history
         + [{"role": "user", "content": constrained_question}]
     )
 
 
 def _ask_streaming_ollama(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None):
+                           usage_out: dict | None = None, fallback_contact: str = ""):
     logger.info(
         "LLM stream start | provider=ollama | model=%s | history_turns=%d | q_chars=%d | ctx_chars=%d | conversational=%s",
         model_name, len(history) // 2, len(question), len(markdown_text), is_conversational(question),
     )
     t0 = time.perf_counter()
     output_chars = 0
-    messages = _build_messages(question, history, markdown_text)
+    messages = _build_messages(question, history, markdown_text, fallback_contact)
     stream = ollama.chat(model=model_name, messages=messages, stream=True)
     last_chunk = None
     try:
@@ -73,9 +74,10 @@ def _ask_streaming_ollama(question: str, history: list, markdown_text: str, mode
         )
 
 
-def _ask_ollama(question: str, history: list, markdown_text: str, model_name: str) -> tuple[str, float]:
+def _ask_ollama(question: str, history: list, markdown_text: str, model_name: str,
+                fallback_contact: str = "") -> tuple[str, float]:
     logger.info("LLM ask | provider=ollama | model=%s", model_name)
-    messages = _build_messages(question, history, markdown_text)
+    messages = _build_messages(question, history, markdown_text, fallback_contact)
     t0 = time.perf_counter()
     response = ollama.chat(model=model_name, messages=messages)
     elapsed = time.perf_counter() - t0

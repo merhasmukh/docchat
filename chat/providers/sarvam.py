@@ -3,7 +3,7 @@ import time
 
 from django.conf import settings
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, DOCUMENT_SYSTEM_PROMPT, is_conversational, strip_citation_phrases
+from .utils import CONVERSATIONAL_SYSTEM_PROMPT, build_document_prompt, is_conversational, strip_citation_phrases
 
 logger = logging.getLogger("chat.pipeline")
 
@@ -42,7 +42,8 @@ def _extract_content(response) -> str:
     return ""
 
 
-def _build_messages(question: str, history: list, markdown_text: str) -> list:
+def _build_messages(question: str, history: list, markdown_text: str,
+                    fallback_contact: str = "") -> list:
     if is_conversational(question):
         # Skip history entirely for greetings/small-talk:
         # document Q&A history confuses the model when it receives a greeting,
@@ -70,7 +71,7 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
         "If the answer is not there, say so — do not use outside knowledge.]"
     )
     return (
-        [{"role": "system", "content": DOCUMENT_SYSTEM_PROMPT.format(markdown_text=markdown_text)}]
+        [{"role": "system", "content": build_document_prompt(markdown_text, fallback_contact)}]
         + trimmed_history
         + [{"role": "user", "content": constrained_question}]
     )
@@ -79,7 +80,7 @@ def _build_messages(question: str, history: list, markdown_text: str) -> list:
 # ── API callers ────────────────────────────────────────────────────────────────
 
 def _ask_streaming_sarvam(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None):
+                           usage_out: dict | None = None, fallback_contact: str = ""):
     from sarvamai import SarvamAI
 
     logger.info(
@@ -89,7 +90,7 @@ def _ask_streaming_sarvam(question: str, history: list, markdown_text: str, mode
     t0 = time.perf_counter()
 
     client = SarvamAI(api_subscription_key=settings.SARVAM_API_KEY)
-    messages = _build_messages(question, history, markdown_text)
+    messages = _build_messages(question, history, markdown_text, fallback_contact)
 
     # The sarvamai SDK's streaming iterator raises even on HTTP 200 responses.
     # Use the non-streaming API and yield the full answer at once instead.
@@ -122,12 +123,13 @@ def _ask_streaming_sarvam(question: str, history: list, markdown_text: str, mode
     yield answer
 
 
-def _ask_sarvam(question: str, history: list, markdown_text: str, model_name: str) -> tuple[str, float]:
+def _ask_sarvam(question: str, history: list, markdown_text: str, model_name: str,
+                fallback_contact: str = "") -> tuple[str, float]:
     from sarvamai import SarvamAI
 
     logger.info("LLM ask | provider=sarvam | model=%s", model_name)
     client = SarvamAI(api_subscription_key=settings.SARVAM_API_KEY)
-    messages = _build_messages(question, history, markdown_text)
+    messages = _build_messages(question, history, markdown_text, fallback_contact)
 
     t0 = time.perf_counter()
     response = client.chat.completions(

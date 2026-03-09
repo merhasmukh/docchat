@@ -254,6 +254,40 @@ class LLMConfig(models.Model):
         return obj
 
 
+# ── Document Configuration ─────────────────────────────────────────────────────
+
+class DocumentConfig(models.Model):
+    """
+    Singleton admin config for document-specific behaviour.
+    fallback_contact: shown to users when the document doesn't contain the answer.
+    """
+    fallback_contact = models.TextField(
+        blank=True,
+        default="",
+        help_text=(
+            "Contact details shown when the document doesn't contain the answer. "
+            "Leave blank to use the default 'I don't know' reply. "
+            "Example:\n"
+            "  Gujarat Vidyapith\n"
+            "  Ashram Marg, Navrangpura, Ahmedabad – 380 009\n"
+            "  Phone: 079-27541148\n"
+            "  Website: https://gujaratvidyapith.org/"
+        ),
+    )
+
+    class Meta:
+        verbose_name        = "Document Configuration"
+        verbose_name_plural = "Document Configuration"
+
+    def __str__(self):
+        return "Document Configuration"
+
+    @classmethod
+    def get_active(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 # ── Chat Session Configuration ─────────────────────────────────────────────────
 
 class ChatSessionConfig(models.Model):

@@ -96,53 +96,97 @@ NOT_FOUND_REPLY = "I'm sorry, I don't know the answer to your question."
 
 # ── Document system prompts ────────────────────────────────────────────────────
 
-# Behavioural rules shared by all prompts — no document section.
-_RULES = (
-    "STRICT RULES:\n"
-    "1. LANGUAGE — Always reply in the exact same language as the user's question.\n"
-    "   • Gujarati question (even mixed with English terms) → reply in Gujarati script.\n"
-    "   • Hindi question → reply in Hindi (Devanagari script).\n"
-    "   • English question → reply in English.\n"
-    "   • Mixed Gujarati+English (e.g. 'bca ma admission leva su joyeye') → reply in Gujarati,\n"
-    "     keeping English acronyms/proper nouns (BCA, MCA, etc.) as-is.\n"
-    "   Example: Q='bca ma admission leva su joyeye' → A='BCA માં પ્રવેશ માટે ધોરણ 12 માં 40% માર્ક્સ જોઈએ.'\n"
-    "   NEVER reply in English when the question contains Gujarati or Hindi words.\n"
-    "2. Answer ONLY from the document context — no training data or external knowledge.\n"
-    "3. If the answer isn't in the document, reply with exactly:\n"
-    f'   "{NOT_FOUND_REPLY}" — translated into the language of the question — then stop.\n'
-    "4. CONVERSATION CONTEXT — Use the conversation history to understand the full meaning of\n"
-    "   short or follow-up questions before answering.\n"
-    "   Example: if the user previously asked about BCA admission and now asks 'ok for mca?',\n"
-    "   interpret this as 'what are the admission requirements for MCA?' and answer from the document.\n"
-    "   Never invent facts, but DO resolve what the user is asking using prior turns.\n"
-    "5. Reply directly — NEVER reference the source. Banned phrases include any variation of:\n"
-    "   'the document/context states/says/mentions', 'according to/based on/from the document', etc.\n"
-    "   ✓ Say: '500 rupees.'   ✗ Not: 'The document states the fee is 500 rupees.'\n"
-    "6. Cross-language matching — match concepts across scripts:\n"
-    "   e.g. 'admission' = 'પ્રવેશ', 'syllabus' = 'અભ્યાસક્રમ' = 'पाठ्यक्रम'."
-)
+def _build_rules(fallback_contact: str = "") -> str:
+    """
+    Build the STRICT RULES block.
+    When fallback_contact is set, rule 3 instructs the model to reply with
+    the not-found message AND then provide the contact details.
+    """
+    if fallback_contact.strip():
+        rule3 = (
+            "3. If the answer isn't in the document:\n"
+            "   • Warmly acknowledge in the user's language that you don't have that information.\n"
+            "   • NEVER say 'not found in document' or mention the source — just say you don't have it.\n"
+            "   • ALWAYS follow with a helpful suggestion to contact using the details below.\n"
+            "   • Use the contact info as context — weave it naturally into one or two sentences.\n"
+            "     Do NOT dump the entire block verbatim. Pick what's relevant (phone, website, address).\n"
+            "   • The suggestion must also be in the user's language (Gujarati/Hindi/English).\n"
+            "   Examples:\n"
+            "     Gujarati Q → 'MCA ના અભ્યાસક્રમ વિશે અત્યારે માહિતી ઉપલબ્ધ નથી. "
+            "વધુ જાણકારી માટે Gujarat Vidyapith ના Admission Helpline 079-27541148 પર "
+            "સંપર્ક કરો અથવા gujaratvidyapith.org ની મુલાકાત લો.'\n"
+            "     English Q → 'I don't have information about MCA syllabus. "
+            "For details, please contact Gujarat Vidyapith at 079-27541148 "
+            "or visit https://www.gujaratvidyapith.org.'\n"
+            "   Contact context (use naturally, do not paste as-is):\n"
+            f"   {fallback_contact}\n"
+        )
+    else:
+        rule3 = (
+            "3. If the answer isn't in the document, warmly acknowledge in the user's language\n"
+            "   that you don't have that information — then stop.\n"
+            "   Do NOT mention the document or source. Just say you don't have it.\n"
+        )
 
-# Full prompt with document context injected via {markdown_text}.
-# Used by Ollama, Sarvam, and Gemini (non-cached / inline mode).
-DOCUMENT_SYSTEM_PROMPT = (
-    "You are a document question-answering assistant.\n"
-    "Your ONLY source of information is the document context provided below.\n\n"
-    + _RULES
-    + "\n\n"
-    "## Document Context:\n\n"
-    "{markdown_text}\n\n"
-    "---\n"
-    "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely. "
-    "Do NOT mention the document or context in your answer — just give the answer directly."
-)
+    return (
+        "STRICT RULES:\n"
+        "1. LANGUAGE — Always reply in the exact same language as the user's question.\n"
+        "   • Gujarati question (even mixed with English terms) → reply in Gujarati script.\n"
+        "   • Hindi question → reply in Hindi (Devanagari script).\n"
+        "   • English question → reply in English.\n"
+        "   • Mixed Gujarati+English (e.g. 'bca ma admission leva su joyeye') → reply in Gujarati,\n"
+        "     keeping English acronyms/proper nouns (BCA, MCA, etc.) as-is.\n"
+        "   Example: Q='bca ma admission leva su joyeye' → A='BCA માં પ્રવેશ માટે ધોરણ 12 માં 40% માર્ક્સ જોઈએ.'\n"
+        "   NEVER reply in English when the question contains Gujarati or Hindi words.\n"
+        "2. Answer ONLY from the document context — no training data or external knowledge.\n"
+        + rule3
+        + "4. CONVERSATION CONTEXT — Use the conversation history to understand the full meaning of\n"
+        "   short or follow-up questions before answering.\n"
+        "   Example: if the user previously asked about BCA admission and now asks 'ok for mca?',\n"
+        "   interpret this as 'what are the admission requirements for MCA?' and answer from the document.\n"
+        "   Never invent facts, but DO resolve what the user is asking using prior turns.\n"
+        "5. Reply directly — NEVER reference the source. Banned phrases include any variation of:\n"
+        "   'the document/context states/says/mentions', 'according to/based on/from the document', etc.\n"
+        "   ✓ Say: '500 rupees.'   ✗ Not: 'The document states the fee is 500 rupees.'\n"
+        "6. Cross-language matching — match concepts across scripts:\n"
+        "   e.g. 'admission' = 'પ્રવેશ', 'syllabus' = 'અભ્યાસક્રમ' = 'पाठ्यक्रम'."
+    )
 
-# Rules-only prompt used as Gemini system_instruction when the document is
-# placed in cached `contents` (cache stores the document; this stores the rules).
-DOCUMENT_SYSTEM_INSTRUCTION = (
-    "You are a document question-answering assistant.\n"
-    "Your ONLY source of information is the document context provided in this conversation.\n\n"
-    + _RULES
-)
+
+def build_document_prompt(markdown_text: str, fallback_contact: str = "") -> str:
+    """
+    Full system prompt with document context injected.
+    Used by Ollama, Sarvam, and Gemini (non-cached / inline mode).
+    """
+    return (
+        "You are a document question-answering assistant.\n"
+        "Your ONLY source of information is the document context provided below.\n\n"
+        + _build_rules(fallback_contact)
+        + "\n\n"
+        "## Document Context:\n\n"
+        f"{markdown_text}\n\n"
+        "---\n"
+        "REMINDER: Use ONLY the document above. Ignore your training knowledge entirely. "
+        "Do NOT mention the document or context in your answer — just give the answer directly."
+    )
+
+
+def build_document_instruction(fallback_contact: str = "") -> str:
+    """
+    Rules-only prompt used as Gemini system_instruction when the document is
+    placed in cached contents (cache stores the document; this stores the rules).
+    """
+    return (
+        "You are a document question-answering assistant.\n"
+        "Your ONLY source of information is the document context provided in this conversation.\n\n"
+        + _build_rules(fallback_contact)
+    )
+
+
+# Backward-compatible constants — zero-fallback versions for callers that
+# still use the old string form (e.g. agent loop).
+DOCUMENT_SYSTEM_PROMPT = build_document_prompt("{markdown_text}")
+DOCUMENT_SYSTEM_INSTRUCTION = build_document_instruction()
 
 
 # ── Agent system prompt ────────────────────────────────────────────────────────

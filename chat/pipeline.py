@@ -19,7 +19,11 @@ logger = logging.getLogger("chat.pipeline")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 
 # Re-export Gemini cache helpers so views.py import path stays unchanged
-from .providers.gemini import create_gemini_cache, delete_gemini_cache  # noqa: E402
+from .providers.gemini import create_gemini_cache, delete_gemini_cache, GeminiUnavailableError  # noqa: E402
+
+# Ordered fallback models tried when the primary Gemini model returns 503 UNAVAILABLE.
+# The primary model (from LLMConfig) is always tried first; these are fallbacks only.
+_GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
 
 
 # ── OCR backends ───────────────────────────────────────────────────────────────
@@ -486,27 +490,47 @@ def ask_streaming(question: str, history: list, markdown_text: str,
     Generator that yields string tokens from the active LLM's streaming response.
     Used by the /chat SSE route.
     """
-    from .models import LLMConfig
+    from .models import LLMConfig, DocumentConfig
     from .providers.gemini import _ask_streaming_gemini
     from .providers.ollama import _ask_streaming_ollama
     from .providers.sarvam import _ask_streaming_sarvam
 
     config = LLMConfig.get_active()
+    fallback_contact = DocumentConfig.get_active().fallback_contact
 
     if config.provider == "gemini":
-        yield from _ask_streaming_gemini(
-            question, history, markdown_text, config.gemini_model,
-            usage_out=usage_out, cache_name=gemini_cache_name,
-        )
+        # Build ordered list: primary model first, then fallbacks (skipping duplicates)
+        models_to_try = [config.gemini_model] + [
+            m for m in _GEMINI_FALLBACK_MODELS if m != config.gemini_model
+        ]
+        for attempt, model in enumerate(models_to_try):
+            # Only use cache for the primary model — cache is model-specific
+            cache = gemini_cache_name if attempt == 0 else None
+            try:
+                yield from _ask_streaming_gemini(
+                    question, history, markdown_text, model,
+                    usage_out=usage_out, cache_name=cache,
+                    fallback_contact=fallback_contact,
+                )
+                break  # success — stop trying fallbacks
+            except GeminiUnavailableError:
+                if attempt < len(models_to_try) - 1:
+                    next_model = models_to_try[attempt + 1]
+                    logger.warning(
+                        "Gemini model %s unavailable, retrying with %s", model, next_model
+                    )
+                else:
+                    logger.error("All Gemini fallback models exhausted — raising 503")
+                    raise
     elif config.provider == "sarvam":
         yield from _ask_streaming_sarvam(
             question, history, markdown_text, config.sarvam_model,
-            usage_out=usage_out,
+            usage_out=usage_out, fallback_contact=fallback_contact,
         )
     else:  # ollama
         yield from _ask_streaming_ollama(
             question, history, markdown_text, config.ollama_model,
-            usage_out=usage_out,
+            usage_out=usage_out, fallback_contact=fallback_contact,
         )
 
 

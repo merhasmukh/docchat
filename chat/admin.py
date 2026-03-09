@@ -11,7 +11,7 @@ from django import forms
 from django.contrib import admin
 from django.conf import settings
 
-from .models import Document, LLMConfig, ChatSessionConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification, AgentMemory
+from .models import Document, LLMConfig, ChatSessionConfig, DocumentConfig, ModelPricing, ChatSession, ChatMessage, EmailVerification, AgentMemory
 
 
 # ── Document (admin-managed) ───────────────────────────────────────────────────
@@ -419,6 +419,28 @@ class ChatSessionConfigAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return not ChatSessionConfig.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# ── Document Configuration ─────────────────────────────────────────────────────
+
+@admin.register(DocumentConfig)
+class DocumentConfigAdmin(admin.ModelAdmin):
+    fieldsets = [
+        ("Fallback Contact Details", {
+            "fields": ("fallback_contact",),
+            "description": (
+                "When the document doesn't contain the answer to a user's question, "
+                "the bot will suggest these contact details. Leave blank to use the "
+                "default 'I don't know' reply."
+            ),
+        }),
+    ]
+
+    def has_add_permission(self, request):
+        return not DocumentConfig.objects.exists()
 
     def has_delete_permission(self, request, obj=None):
         return False

@@ -18,7 +18,7 @@ def search_document(query: str, doc, cfg) -> str:
     if not doc.qdrant_collection:
         return "Document search is unavailable (no chunks found). Try get_page() instead."
     from chat.pipeline import retrieve_relevant_context_qdrant
-    result = retrieve_relevant_context_qdrant(query, doc.qdrant_collection, cfg.rag_embedding, top_k=3)
+    result = retrieve_relevant_context_qdrant(query, doc.qdrant_collection, cfg.rag_embedding, top_k=4)
     return result or "No relevant content found for that query."
 
 
