@@ -746,6 +746,39 @@ body {
 .otp-back-btn:hover { color: var(--accent); }
 .otp-back-btn i { margin-right: 0.25rem; font-size: 0.78rem; }
 
+/* ─── Phone input (country selector + number) ───────────────────────────────── */
+.um-phone-wrap { gap: 0; }
+
+.um-country-select {
+  flex: 0 0 auto;
+  height: 42px;
+  padding: 0 0.5rem;
+  border: 1.5px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: #f8f5f2;
+  color: var(--text-dark);
+  font-size: 0.88rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.um-phone-wrap:focus-within .um-country-select { border-color: var(--accent); }
+
+.um-phone-wrap input[type="tel"] {
+  flex: 1;
+  border-radius: 0 8px 8px 0;
+  padding-left: 0.75rem !important;
+}
+
+.um-field-error {
+  font-size: 0.78rem;
+  color: var(--danger);
+  margin: 0.25rem 0 0;
+}
+
 /* ─── Utility ────────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 

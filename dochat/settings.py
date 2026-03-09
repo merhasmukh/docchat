@@ -54,12 +54,44 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "dochat.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# ── Database ────────────────────────────────────────────────────────────────────
+# Set DB_ENGINE in .env to switch backends.
+# sqlite   → uses local db.sqlite3 (default, good for development)
+# mysql    → requires: pip install mysqlclient
+# postgres → requires: pip install psycopg2-binary
+_DB_ENGINE = os.environ.get("DB_ENGINE", "sqlite").lower()
+
+if _DB_ENGINE == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE":   "django.db.backends.mysql",
+            "NAME":     os.environ.get("DB_NAME", "docchat"),
+            "USER":     os.environ.get("DB_USER", "root"),
+            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+            "HOST":     os.environ.get("DB_HOST", "localhost"),
+            "PORT":     os.environ.get("DB_PORT", "3306"),
+            "OPTIONS":  {"charset": "utf8mb4"},
+        }
     }
-}
+elif _DB_ENGINE == "postgres":
+    DATABASES = {
+        "default": {
+            "ENGINE":   "django.db.backends.postgresql",
+            "NAME":     os.environ.get("DB_NAME", "docchat"),
+            "USER":     os.environ.get("DB_USER", "postgres"),
+            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+            "HOST":     os.environ.get("DB_HOST", "localhost"),
+            "PORT":     os.environ.get("DB_PORT", "5432"),
+        }
+    }
+else:
+    # Default: SQLite (no extra config needed)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME":   BASE_DIR / "db.sqlite3",
+        }
+    }
 
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = 86400  # 24 hours

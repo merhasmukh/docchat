@@ -183,8 +183,9 @@ def request_otp_view(request):
     from django.utils import timezone
     from .models import EmailVerification
 
-    name  = (request.data.get("name")  or "").strip()
-    email = (request.data.get("email") or "").strip().lower()
+    name   = (request.data.get("name")   or "").strip()
+    email  = (request.data.get("email")  or "").strip().lower()
+    mobile = (request.data.get("mobile") or "").strip()
 
     if not name:
         return Response({"status": "error", "message": "Name is required."}, status=400)
@@ -201,13 +202,15 @@ def request_otp_view(request):
     ).first()
 
     if existing:
-        existing.name = name
-        existing.save(update_fields=["name"])
+        existing.name   = name
+        existing.mobile = mobile
+        existing.save(update_fields=["name", "mobile"])
         verification = existing
     else:
         verification = EmailVerification.objects.create(
             email      = email,
             name       = name,
+            mobile     = mobile,
             code       = EmailVerification.generate_code(),
             expires_at = timezone.now() + datetime.timedelta(minutes=1),
         )
@@ -297,6 +300,7 @@ def verify_otp_view(request):
         session_key   = token,
         user_name     = verification.name,
         user_email    = verification.email,
+        user_mobile   = verification.mobile,
         document_name = doc.original_filename if doc else "",
     )
 
@@ -374,9 +378,10 @@ def session_config_view(request):
     from .models import ChatSessionConfig
     cfg = ChatSessionConfig.get_active()
     return Response({
-        "collect_name":  cfg.collect_name,
-        "collect_email": cfg.collect_email,
-        "verify_email":  cfg.verify_email,
+        "collect_name":   cfg.collect_name,
+        "collect_email":  cfg.collect_email,
+        "verify_email":   cfg.verify_email,
+        "collect_mobile": cfg.collect_mobile,
     })
 
 
@@ -396,8 +401,9 @@ def start_session_view(request):
             status=400,
         )
 
-    name  = (request.data.get("name")  or "").strip()
-    email = (request.data.get("email") or "").strip().lower()
+    name   = (request.data.get("name")   or "").strip()
+    email  = (request.data.get("email")  or "").strip().lower()
+    mobile = (request.data.get("mobile") or "").strip()
 
     if cfg.collect_name and not name:
         return Response({"status": "error", "message": "Name is required."}, status=400)
@@ -406,8 +412,9 @@ def start_session_view(request):
 
     session = ChatSession.objects.create(
         session_key=str(uuid.uuid4()),
-        user_name=name   if cfg.collect_name  else "",
-        user_email=email if cfg.collect_email else "",
+        user_name=name     if cfg.collect_name   else "",
+        user_email=email   if cfg.collect_email  else "",
+        user_mobile=mobile if cfg.collect_mobile else "",
     )
     return Response({"status": "ok", "token": session.session_key})
 

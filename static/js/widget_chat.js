@@ -29,6 +29,9 @@
   var elStep2      = $('wg-step2');
   var elName       = $('wg-name');
   var elEmail      = $('wg-email');
+  var elMobile     = $('wg-mobile');
+  var elCountry    = $('wg-country-code');
+  var elMobileErr  = $('wg-mobile-error');
   var elCode       = $('wg-code');
   var elAuthErr    = $('wg-auth-error');
   var elOtpErr     = $('wg-otp-error');
@@ -50,7 +53,7 @@
   var countdownTimer = null;
   var isStreaming    = false;
   var greetingShown  = false;
-  var sessionCfg     = { collect_name: true, collect_email: true, verify_email: true };
+  var sessionCfg     = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false };
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function getCookie(name) {
@@ -104,10 +107,12 @@
   function showAuthStep1() {
     clearError(elAuthErr);
     // Show/hide fields based on admin config
-    var fieldName  = document.getElementById('wg-field-name');
-    var fieldEmail = document.getElementById('wg-field-email');
-    if (fieldName)  fieldName.style.display  = sessionCfg.collect_name  ? '' : 'none';
-    if (fieldEmail) fieldEmail.style.display = sessionCfg.collect_email ? '' : 'none';
+    var fieldName   = document.getElementById('wg-field-name');
+    var fieldEmail  = document.getElementById('wg-field-email');
+    var fieldMobile = document.getElementById('wg-field-mobile');
+    if (fieldName)   fieldName.style.display   = sessionCfg.collect_name   ? '' : 'none';
+    if (fieldEmail)  fieldEmail.style.display  = sessionCfg.collect_email  ? '' : 'none';
+    if (fieldMobile) fieldMobile.style.display = sessionCfg.collect_mobile ? '' : 'none';
     // Adjust button label
     elReqBtn.textContent = (sessionCfg.collect_email && sessionCfg.verify_email)
       ? 'Send verification code'
@@ -206,7 +211,7 @@
       loadHistory();
     } else {
       localStorage.removeItem(TOKEN_KEY);
-      if (!sessionCfg.collect_name && !sessionCfg.collect_email) {
+      if (!sessionCfg.collect_name && !sessionCfg.collect_email && !sessionCfg.collect_mobile) {
         // Anonymous — create session immediately
         createDirectSession({});
       } else {
@@ -265,22 +270,57 @@
       });
   }
 
+  // ── Mobile validation ───────────────────────────────────────────────────────
+  function validateMobile() {
+    var digits  = elMobile.value.replace(/[\s\-]/g, '');
+    var code    = elCountry.value;
+    var opt     = elCountry.options[elCountry.selectedIndex];
+    var reqLen  = parseInt(opt.getAttribute('data-digits') || '10', 10);
+    var pattern = opt.getAttribute('data-pattern') || '';
+
+    if (!digits) {
+      showError(elMobileErr, 'Please enter your mobile number.');
+      return null;
+    }
+    if (!/^\d+$/.test(digits)) {
+      showError(elMobileErr, 'Mobile number must contain only digits.');
+      return null;
+    }
+    if (digits.length !== reqLen) {
+      showError(elMobileErr, 'Mobile number must be exactly ' + reqLen + ' digits for ' + code + '.');
+      return null;
+    }
+    if (pattern && !new RegExp(pattern).test(digits)) {
+      showError(elMobileErr, 'Please enter a valid mobile number.');
+      return null;
+    }
+    clearError(elMobileErr);
+    return code + digits;
+  }
+
   // ── Step 1: submit → OTP or direct session ─────────────────────────────────
   elReqBtn.addEventListener('click', function () {
-    var name  = elName.value.trim();
-    var email = elEmail.value.trim();
+    var name   = elName.value.trim();
+    var email  = elEmail.value.trim();
+    var mobile = '';
     clearError(elAuthErr);
 
     if (sessionCfg.collect_name  && !name)  return showError(elAuthErr, 'Please enter your name.');
     if (sessionCfg.collect_email && !email) return showError(elAuthErr, 'Please enter your email address.');
+
+    if (sessionCfg.collect_mobile) {
+      mobile = validateMobile();
+      if (mobile === null) return;
+    }
 
     setLoading(elReqBtn, true);
 
     // ── Direct session (no OTP needed) ──────────────────────────────────────
     if (!sessionCfg.collect_email || !sessionCfg.verify_email) {
       var payload = {};
-      if (sessionCfg.collect_name)  payload.name  = name;
-      if (sessionCfg.collect_email) payload.email = email;
+      if (sessionCfg.collect_name)   payload.name   = name;
+      if (sessionCfg.collect_email)  payload.email  = email;
+      if (sessionCfg.collect_mobile) payload.mobile = mobile;
       createDirectSession(payload);
       return;
     }
@@ -289,7 +329,7 @@
     fetch('/request-otp/', {
       method: 'POST',
       headers: apiHeaders(),
-      body: JSON.stringify({ name: name, email: email }),
+      body: JSON.stringify({ name: name, email: email, mobile: mobile }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {

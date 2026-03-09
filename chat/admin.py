@@ -409,7 +409,7 @@ class LLMConfigAdmin(admin.ModelAdmin):
 class ChatSessionConfigAdmin(admin.ModelAdmin):
     fieldsets = [
         ("User Info Collection", {
-            "fields": ("collect_name", "collect_email", "verify_email"),
+            "fields": ("collect_name", "collect_email", "verify_email", "collect_mobile"),
             "description": (
                 "Control what information users must provide before starting a chat. "
                 "Disabling collection reduces friction and improves user retention."
@@ -474,15 +474,15 @@ class ChatMessageInline(admin.TabularInline):
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
     list_display   = (
-        "user_name", "user_email", "document_name", "message_count",
+        "user_name", "user_email", "user_mobile", "document_name", "message_count",
         "total_input_tokens", "total_output_tokens", "total_cached_input_tokens",
         "total_tokens", "avg_tokens_per_message",
         "total_cost_inr", "total_cache_read_cost_inr", "total_cache_storage_cost_inr",
         "avg_cost_per_message_inr", "started_at", "last_activity",
     )
-    search_fields  = ("user_name", "user_email", "document_name")
+    search_fields  = ("user_name", "user_email", "user_mobile", "document_name")
     readonly_fields = (
-        "session_key", "user_name", "user_email", "document_name",
+        "session_key", "user_name", "user_email", "user_mobile", "document_name",
         "started_at", "last_activity",
         "message_count",
         "total_input_tokens", "total_output_tokens", "total_tokens",

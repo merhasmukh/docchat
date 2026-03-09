@@ -49,6 +49,9 @@ const modalCloseBtn   = document.getElementById("modal-close-btn");
 const userForm       = document.getElementById("user-form");
 const nameInput      = document.getElementById("user-name");
 const emailInput     = document.getElementById("user-email");
+const mobileInput    = document.getElementById("user-mobile");
+const countrySelect  = document.getElementById("country-code");
+const mobileError    = document.getElementById("mobile-error");
 const modalError     = document.getElementById("modal-error");
 const modalSubmitBtn = document.getElementById("modal-submit-btn");
 
@@ -72,7 +75,7 @@ let otpResendUsed     = false;
 let currentFilename = null;
 
 // Session config (loaded from /session-config/ on page load)
-let sessionCfg = { collect_name: true, collect_email: true, verify_email: true };
+let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false };
 
 // ─── Page load: fetch session config + check active document + session ─────────
 (async function init() {
@@ -101,7 +104,7 @@ let sessionCfg = { collect_name: true, collect_email: true, verify_email: true }
     if (sessionActive) {
       showChatMode(currentFilename);
       loadHistory();
-    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email) {
+    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email && !sessionCfg.collect_mobile) {
       // Anonymous mode — create session immediately, no modal needed
       await createDirectSession({});
     } else {
@@ -162,20 +165,24 @@ function showUserModal() {
     docIndicator.classList.add("loaded");
   }
   // Show/hide fields based on admin config
-  const nameField  = document.getElementById("um-field-name");
-  const emailField = document.getElementById("um-field-email");
-  if (nameField)  nameField.style.display  = sessionCfg.collect_name  ? "" : "none";
-  if (emailField) emailField.style.display = sessionCfg.collect_email ? "" : "none";
+  const nameField   = document.getElementById("um-field-name");
+  const emailField  = document.getElementById("um-field-email");
+  const mobileField = document.getElementById("um-field-mobile");
+  if (nameField)   nameField.style.display   = sessionCfg.collect_name   ? "" : "none";
+  if (emailField)  emailField.style.display  = sessionCfg.collect_email  ? "" : "none";
+  if (mobileField) mobileField.style.display = sessionCfg.collect_mobile ? "" : "none";
 
   // Always reset to step 1
   showOtpStep(1);
-  nameInput.value  = "";
-  emailInput.value = "";
+  nameInput.value   = "";
+  emailInput.value  = "";
+  mobileInput.value = "";
+  if (mobileError) mobileError.classList.add("hidden");
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = false;
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
   userModal.classList.remove("hidden");
-  (sessionCfg.collect_name ? nameInput : emailInput).focus();
+  (sessionCfg.collect_name ? nameInput : sessionCfg.collect_email ? emailInput : mobileInput).focus();
 }
 
 function showOtpStep(step) {
@@ -222,6 +229,38 @@ function stopOtpCountdown() {
   }
 }
 
+// ─── Mobile validation ────────────────────────────────────────────────────────
+function validateMobile() {
+  const digits  = mobileInput.value.replace(/[\s\-]/g, "");
+  const code    = countrySelect.value;
+  const opt     = countrySelect.options[countrySelect.selectedIndex];
+  const reqLen  = parseInt(opt.dataset.digits || "10", 10);
+  const pattern = opt.dataset.pattern || "";
+
+  if (!digits) {
+    mobileError.textContent = "Please enter your mobile number.";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (!/^\d+$/.test(digits)) {
+    mobileError.textContent = "Mobile number must contain only digits.";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (digits.length !== reqLen) {
+    mobileError.textContent = `Mobile number must be exactly ${reqLen} digits for ${code}.`;
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (pattern && !new RegExp(pattern).test(digits)) {
+    mobileError.textContent = "Please enter a valid mobile number.";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  mobileError.classList.add("hidden");
+  return code + digits;
+}
+
 // ─── Direct session creation (no OTP) ─────────────────────────────────────────
 async function createDirectSession(payload) {
   try {
@@ -243,7 +282,7 @@ async function createDirectSession(payload) {
   }
 }
 
-// ─── Step 1: submit name + email → OTP or direct session ──────────────────────
+// ─── Step 1: submit name + email (+ mobile) → OTP or direct session ───────────
 userForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name  = nameInput.value.trim();
@@ -260,6 +299,13 @@ userForm.addEventListener("submit", async (e) => {
     return;
   }
 
+  let mobile = "";
+  if (sessionCfg.collect_mobile) {
+    const validated = validateMobile();
+    if (validated === null) return;
+    mobile = validated;
+  }
+
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = true;
 
@@ -267,8 +313,9 @@ userForm.addEventListener("submit", async (e) => {
   if (!sessionCfg.collect_email || !sessionCfg.verify_email) {
     modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
     const payload = {};
-    if (sessionCfg.collect_name)  payload.name  = name;
-    if (sessionCfg.collect_email) payload.email = email;
+    if (sessionCfg.collect_name)   payload.name   = name;
+    if (sessionCfg.collect_email)  payload.email  = email;
+    if (sessionCfg.collect_mobile) payload.mobile = mobile;
     const result = await createDirectSession(payload);
     if (result !== true) {
       modalError.textContent = result.error;
@@ -286,7 +333,7 @@ userForm.addEventListener("submit", async (e) => {
     const res  = await fetch("/request-otp/", {
       method:  "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      body:    JSON.stringify({ name, email }),
+      body:    JSON.stringify({ name, email, mobile }),
     });
     const data = await res.json();
 

@@ -198,6 +198,32 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 15%, transparent);
 }
 
+/* Phone input */
+.wg-phone-wrap {
+  display: flex;
+  gap: 0;
+}
+.wg-country-select {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 6px;
+  border: 1.5px solid #e2e8f0;
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  background: #f8fafc;
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  color: #1e293b;
+}
+.wg-country-select:focus { border-color: var(--wg-accent); }
+.wg-mobile-input {
+  border-radius: 0 10px 10px 0 !important;
+  flex: 1;
+}
+
 /* OTP code input */
 .wg-otp-input {
   font-size: 28px;

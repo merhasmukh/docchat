@@ -50,6 +50,29 @@
       <div class="wg-field" id="wg-field-email">
         <input id="wg-email" type="email" class="wg-input" placeholder="Email address" autocomplete="email">
       </div>
+      <div class="wg-field" id="wg-field-mobile" style="display:none">
+        <div class="wg-phone-wrap">
+          <select id="wg-country-code" class="wg-country-select">
+            <option value="+91" data-digits="10" data-pattern="^[6-9]" selected>🇮🇳 +91</option>
+            <option value="+1"  data-digits="10" data-pattern="^[2-9]">🇺🇸 +1</option>
+            <option value="+44" data-digits="10" data-pattern="">🇬🇧 +44</option>
+            <option value="+971" data-digits="9" data-pattern="">🇦🇪 +971</option>
+            <option value="+65" data-digits="8" data-pattern="">🇸🇬 +65</option>
+            <option value="+61" data-digits="9" data-pattern="">🇦🇺 +61</option>
+            <option value="+1" data-digits="10" data-pattern="^[2-9]">🇨🇦 +1</option>
+            <option value="+49" data-digits="11" data-pattern="">🇩🇪 +49</option>
+            <option value="+33" data-digits="9"  data-pattern="">🇫🇷 +33</option>
+            <option value="+81" data-digits="10" data-pattern="">🇯🇵 +81</option>
+            <option value="+86" data-digits="11" data-pattern="">🇨🇳 +86</option>
+            <option value="+55" data-digits="11" data-pattern="">🇧🇷 +55</option>
+            <option value="+27" data-digits="9"  data-pattern="">🇿🇦 +27</option>
+            <option value="+60" data-digits="9"  data-pattern="">🇲🇾 +60</option>
+            <option value="+92" data-digits="10" data-pattern="^3">🇵🇰 +92</option>
+          </select>
+          <input id="wg-mobile" type="tel" class="wg-input wg-mobile-input" placeholder="Mobile number" autocomplete="tel-national" maxlength="15">
+        </div>
+        <div id="wg-mobile-error" class="wg-error d-none"></div>
+      </div>
       <div id="wg-auth-error" class="wg-error d-none"></div>
       <button id="wg-req-btn" class="wg-btn wg-btn-primary w-100">Send verification code</button>
     </div>
