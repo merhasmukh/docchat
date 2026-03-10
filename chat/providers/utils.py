@@ -90,10 +90,6 @@ CONVERSATIONAL_SYSTEM_PROMPT = (
     "(Gujarati, Hindi, English, or mixed Gujarati+English or Gujarati+Hindi)."
 )
 
-# Standard reply when the answer is not in the document.
-# The model is instructed to translate this into the question's language.
-NOT_FOUND_REPLY = "I'm sorry, I don't know the answer to your question."
-
 # ── Document system prompts ────────────────────────────────────────────────────
 
 def _build_rules(fallback_contact: str = "") -> str:
@@ -105,17 +101,15 @@ def _build_rules(fallback_contact: str = "") -> str:
     if fallback_contact.strip():
         rule3 = (
             "3. If the answer isn't in the document:\n"
-            "   • Warmly acknowledge in the user's language that you don't have that information.\n"
-            "   • NEVER say 'not found in document' or mention the source — just say you don't have it.\n"
             "   • ALWAYS follow with a helpful suggestion to contact using the details below.\n"
             "   • Use the contact info as context — weave it naturally into one or two sentences.\n"
-            "     Do NOT dump the entire block verbatim. Pick what's relevant (phone, website, address).\n"
+            "   • Do NOT dump the entire block verbatim. Pick what's relevant (phone, website, address).\n"
             "   • The suggestion must also be in the user's language (Gujarati/Hindi/English).\n"
             "   Examples:\n"
-            "     Gujarati Q → 'MCA ના અભ્યાસક્રમ વિશે અત્યારે માહિતી ઉપલબ્ધ નથી. "
+            "   Gujarati Q →'"
             "વધુ જાણકારી માટે Gujarat Vidyapith ના Admission Helpline 079-27541148 પર "
             "સંપર્ક કરો અથવા gujaratvidyapith.org ની મુલાકાત લો.'\n"
-            "     English Q → 'I don't have information about MCA syllabus. "
+            "   English Q → '"
             "For details, please contact Gujarat Vidyapith at 079-27541148 "
             "or visit https://www.gujaratvidyapith.org.'\n"
             "   Contact context (use naturally, do not paste as-is):\n"
@@ -130,13 +124,15 @@ def _build_rules(fallback_contact: str = "") -> str:
 
     return (
         "STRICT RULES:\n"
-        "1. LANGUAGE — Always reply in the exact same language as the user's question.\n"
+        "1. LANGUAGE — Always reply in the EXACT same language as the user's question.\n"
+        "   The document content language is IRRELEVANT — match the question language, not the document.\n"
+        "   • English question → reply ONLY in English. NEVER use Gujarati or Hindi script.\n"
+        "     Example: Q='what is the date of geeta exam' → A='The date of the GEETA exam is 10-05-2026.'\n"
         "   • Gujarati question (even mixed with English terms) → reply in Gujarati script.\n"
+        "     Example: Q='bca ma admission leva su joyeye' → A='BCA માં પ્રવેશ માટે ધોરણ 12 માં 40% માર્ક્સ જોઈએ.'\n"
         "   • Hindi question → reply in Hindi (Devanagari script).\n"
-        "   • English question → reply in English.\n"
-        "   • Mixed Gujarati+English (e.g. 'bca ma admission leva su joyeye') → reply in Gujarati,\n"
-        "     keeping English acronyms/proper nouns (BCA, MCA, etc.) as-is.\n"
-        "   Example: Q='bca ma admission leva su joyeye' → A='BCA માં પ્રવેશ માટે ધોરણ 12 માં 40% માર્ક્સ જોઈએ.'\n"
+        "   • Mixed Gujarati+English → reply in Gujarati, keeping English acronyms/proper nouns as-is.\n"
+        "   NEVER reply in Gujarati or Hindi when the question is written in English.\n"
         "   NEVER reply in English when the question contains Gujarati or Hindi words.\n"
         "2. Answer ONLY from the document context — no training data or external knowledge.\n"
         + rule3
