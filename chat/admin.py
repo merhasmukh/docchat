@@ -267,7 +267,7 @@ class DocumentAdmin(admin.ModelAdmin):
             with open(json_path, "w", encoding="utf-8") as fh:
                 json.dump(pages_data, fh, ensure_ascii=False, indent=2)
 
-            threshold    = getattr(settings, "CONTEXT_CHAR_THRESHOLD", 100_000)
+            threshold    = getattr(settings, "CONTEXT_CHAR_THRESHOLD", 12_000)
             doc_chars    = len(markdown_text)
             context_mode = "rag" if doc_chars > threshold else "full"
 

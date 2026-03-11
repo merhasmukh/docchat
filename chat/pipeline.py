@@ -327,7 +327,7 @@ def store_rag_chunks_qdrant(chunks: list[dict], collection_name: str, embedding_
 
 
 def retrieve_relevant_context_qdrant(question: str, collection_name: str,
-                                      embedding_method: str = "bm25", top_k: int = 3) -> str:
+                                      embedding_method: str = "bm25", top_k: int = 5) -> str:
     """
     Retrieve the top-k most relevant chunks from Qdrant.
     - Vector methods: cosine similarity search.
@@ -442,7 +442,7 @@ def build_rag_chunks(pages_data: dict, embedding_method: str) -> list[dict]:
 
 
 def retrieve_relevant_context(question: str, chunks_path: str,
-                              embedding_method: str = "bm25", top_k: int = 3) -> str:
+                              embedding_method: str = "bm25", top_k: int = 5) -> str:
     """
     Load chunks from disk and return the top-k most relevant pages.
     """

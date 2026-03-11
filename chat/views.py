@@ -581,7 +581,7 @@ def chat_view(request):
             elif has_chunks:
                 from .pipeline import retrieve_relevant_context_qdrant
                 markdown_text = retrieve_relevant_context_qdrant(
-                    _rag_query(question, history), qdrant_collection, rag_embedding, top_k=3
+                    _rag_query(question, history), qdrant_collection, rag_embedding, top_k=5
                 )
             else:
                 markdown_text = full_text[:_SARVAM_BUDGET]
