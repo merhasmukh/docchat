@@ -484,8 +484,8 @@ def retrieve_relevant_context(question: str, chunks_path: str,
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def ask_streaming(question: str, history: list, markdown_text: str,
-                  usage_out: dict | None = None,
-                  gemini_cache_name: str | None = None):
+                  usage_out: dict or None = None,
+                  gemini_cache_name: str or None = None):
     """
     Generator that yields string tokens from the active LLM's streaming response.
     Used by the /chat SSE route.

@@ -25,7 +25,7 @@ class GeminiUnavailableError(Exception):
 
 # ── Context cache ──────────────────────────────────────────────────────────────
 
-def create_gemini_cache(markdown_text: str, model_name: str) -> str | None:
+def create_gemini_cache(markdown_text: str, model_name: str) -> str or None:
     """
     Create a Gemini context cache for the document.
     Returns the cache name (e.g. 'cachedContents/abc123') or None on failure.
@@ -92,7 +92,7 @@ def _build_gemini_contents(question: str, history: list, lang_hint: bool = False
 
 
 def _ask_streaming_gemini(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None, cache_name: str | None = None,
+                           usage_out: dict or None = None, cache_name: str or None = None,
                            fallback_contact: str = ""):
     conversational = is_conversational(question)
     # Bypass cache for conversational messages — the cache's system_instruction

@@ -80,7 +80,7 @@ def _build_messages(question: str, history: list, markdown_text: str,
 # ── API callers ────────────────────────────────────────────────────────────────
 
 def _ask_streaming_sarvam(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None, fallback_contact: str = ""):
+                           usage_out: dict or None = None, fallback_contact: str = ""):
     from sarvamai import SarvamAI
 
     logger.info(

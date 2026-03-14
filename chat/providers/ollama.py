@@ -35,7 +35,7 @@ def _build_messages(question: str, history: list, markdown_text: str,
 
 
 def _ask_streaming_ollama(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict | None = None, fallback_contact: str = ""):
+                           usage_out: dict or None = None, fallback_contact: str = ""):
     logger.info(
         "LLM stream start | provider=ollama | model=%s | history_turns=%d | q_chars=%d | ctx_chars=%d | conversational=%s",
         model_name, len(history) // 2, len(question), len(markdown_text), is_conversational(question),
