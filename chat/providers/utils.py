@@ -63,6 +63,63 @@ def strip_citation_phrases(text: str) -> str:
     return cleaned
 
 
+# ── Language detection ────────────────────────────────────────────────────────
+# Romanized Gujarati words that are STRONGLY distinctive (not common in Hindi/English).
+# Even 1 hit reliably identifies Romanized Gujarati.
+_GUJARATI_STRONG = frozenset({
+    "che", "nay", "kevi", "rite", "sakay", "joyeye", "ketli", "ketla",
+    "levay", "leva", "aapu", "milse", "hase", "malse", "badha", "aave",
+    "thay", "thashe", "karavu", "karvanu", "puchho", "kem",
+})
+# Common Gujarati words (also appear in Hindi) — 2+ hits = likely Gujarati.
+_GUJARATI_WEAK = frozenset({
+    "ma", "su", "shu", "thi", "nu", "na", "ni", "no", "ane", "pan",
+    "ke", "hoy", "mate", "taro", "tamaro", "maro", "amaro",
+})
+# Romanized Hindi words distinctive from Gujarati.
+_HINDI_STRONG = frozenset({
+    "hai", "hain", "kaise", "kyun", "mein", "nahi", "chahiye",
+    "hoga", "hogi", "kitne", "kitni", "milega", "milegi", "aur",
+})
+
+
+def detect_question_language(question: str) -> str:
+    """
+    Return one of: 'gujarati', 'hindi', 'gujarati_roman', 'hindi_roman', 'english'.
+    Unicode script ranges take priority over Roman-script heuristics.
+    """
+    # Unicode script ranges
+    if any('\u0A80' <= c <= '\u0AFF' for c in question):
+        return "gujarati"
+    if any('\u0900' <= c <= '\u097F' for c in question):
+        return "hindi"
+
+    words = set(re.sub(r"[^a-z\s]", " ", question.lower()).split())
+
+    if words & _GUJARATI_STRONG:
+        return "gujarati_roman"
+    if len(words & _GUJARATI_WEAK) >= 2:
+        return "gujarati_roman"
+    if words & _HINDI_STRONG:
+        return "hindi_roman"
+    return "english"
+
+
+def add_language_hint(question: str) -> str:
+    """
+    For Romanized Gujarati/Hindi questions, prepend a native-script instruction
+    so the LLM reliably replies in the correct script regardless of system-prompt
+    language rules being followed or not.
+    Script-based questions (actual Gujarati/Hindi script) are already unambiguous.
+    """
+    lang = detect_question_language(question)
+    if lang == "gujarati_roman":
+        return f"[ગુજરાતીમાં જ જવાબ આપો.]\n{question}"
+    if lang == "hindi_roman":
+        return f"[केवल हिंदी में उत्तर दें।]\n{question}"
+    return question
+
+
 # ── Conversational message detection ──────────────────────────────────────────
 
 _GREETING_WORDS = frozenset({
@@ -124,16 +181,31 @@ def _build_rules(fallback_contact: str = "") -> str:
 
     return (
         "STRICT RULES:\n"
-        "1. LANGUAGE — Always reply in the EXACT same language as the user's question.\n"
-        "   The document content language is IRRELEVANT — match the question language, not the document.\n"
-        "   • English question → reply ONLY in English. NEVER use Gujarati or Hindi script.\n"
-        "     Example: Q='what is the date of geeta exam' → A='The date of the GEETA exam is 10-05-2026.'\n"
-        "   • Gujarati question (even mixed with English terms) → reply in Gujarati script.\n"
-        "     Example: Q='bca ma admission leva su joyeye' → A='BCA માં પ્રવેશ માટે ધોરણ 12 માં 40% માર્ક્સ જોઈએ.'\n"
-        "   • Hindi question → reply in Hindi (Devanagari script).\n"
-        "   • Mixed Gujarati+English → reply in Gujarati, keeping English acronyms/proper nouns as-is.\n"
-        "   NEVER reply in Gujarati or Hindi when the question is written in English.\n"
-        "   NEVER reply in English when the question contains Gujarati or Hindi words.\n"
+        "1. LANGUAGE — Reply in the EXACT same language as the user's question.\n"
+        "   The document content language is IRRELEVANT — match the question language, not the document.\n\n"
+        "   ┌─ HOW TO DETECT THE LANGUAGE ─────────────────────────────────────────────────────┐\n"
+        "   │ A. Gujarati script (unicode): ગ, ા, ્, etc. → reply in Gujarati script.          │\n"
+        "   │ B. Hindi / Devanagari script: क, ख, ग, etc. → reply in Hindi (Devanagari).       │\n"
+        "   │ C. Roman script with Gujarati words → reply in GUJARATI SCRIPT.                  │\n"
+        "   │    Gujarati words written in Roman: ma, che, ke nay, su, kevi rite, ketla,        │\n"
+        "   │    levay, leva, joyeye, aape, thay, sakay, wali, nu, na, ni, no, ane, pan,        │\n"
+        "   │    hoy, kem, shu, thi, mate, karva, mali, male, hase, aapu, badha, ketli.         │\n"
+        "   │    → These are Gujarati words. Roman Gujarati question → Gujarati script reply.   │\n"
+        "   │ D. Pure English (no Gujarati/Hindi words) → reply in English only.               │\n"
+        "   └──────────────────────────────────────────────────────────────────────────────────┘\n\n"
+        "   EXAMPLES (follow these strictly):\n"
+        "   Q='what is the date of geeta exam'          → English reply.\n"
+        "   Q='how many seats in mca'                   → English reply.\n"
+        "   Q='bca ma admission levay ke nay'           → Gujarati reply: 'BCA માં પ્રવેશ 40% સાથે મળે છે.'\n"
+        "   Q='gujarat vidyapith ma bca ma admission levay ke nay' → Gujarati reply.\n"
+        "   Q='kevi rite admission lay sakay'           → Gujarati reply: 'પ્રવેશ માટે www.gujaratvidyapith.org પર રજીસ્ટ્રેશન કરો.'\n"
+        "   Q='mca ma ketli seats che'                  → Gujarati reply: 'MCA માં 60 બેઠકો છે.'\n"
+        "   Q='admission ni last date su che'           → Gujarati reply.\n"
+        "   Q='fee ketli hase'                          → Gujarati reply.\n"
+        "   Q='BCA ke MCA kaun sa better hai'           → Hindi reply (Devanagari).\n\n"
+        "   NEVER reply in English when the question contains ANY Gujarati or Hindi words.\n"
+        "   NEVER reply in Gujarati or Hindi when the question is pure English.\n"
+        "   Keep English acronyms/proper nouns (BCA, MCA, Gujarat Vidyapith) as-is in any language reply.\n"
         "2. Answer ONLY from the document context — no training data or external knowledge.\n"
         + rule3
         + "4. CONVERSATION CONTEXT — Use the conversation history to understand the full meaning of\n"

@@ -122,8 +122,13 @@ def history_view(request):
     msgs = ChatMessage.objects.filter(session=session_obj).order_by("created_at")
     messages = []
     for msg in msgs:
-        messages.append({"role": "user",      "content": msg.question})
-        messages.append({"role": "assistant", "content": msg.answer})
+        messages.append({"role": "user", "content": msg.question})
+        messages.append({
+            "role":    "assistant",
+            "content": msg.answer,
+            "id":      msg.pk,
+            "liked":   msg.liked,
+        })
 
     return Response({"messages": messages})
 
@@ -542,6 +547,102 @@ def chat_view(request):
 
     has_chunks = bool(qdrant_collection)
 
+    # ── Per-session in-memory cache + liked-QA lookup ──────────────────────────
+    # Compute one embedding per question and reuse it for both cache layers.
+    # We skip the embedding for pure conversational messages — they are cheap
+    # and their answers are not worth caching per session.
+    from .providers.utils import is_conversational as _is_conversational_check
+    _is_conv_question = _is_conversational_check(question)
+
+    question_embedding = None
+    if not _is_conv_question:
+        try:
+            from .pipeline import get_question_embedding
+            question_embedding = get_question_embedding(question)
+        except Exception as _emb_exc:
+            logger.warning("Embedding computation failed (cache skipped): %s", _emb_exc)
+
+    def _stream_cache_hit(answer_text: str, source: str):
+        """Generator: stream a cached/liked answer and save ChatMessage."""
+        from decimal import Decimal as _D
+        _t0 = time.perf_counter()
+        words = answer_text.split(" ")
+        for i, word in enumerate(words):
+            token = word if i == 0 else " " + word
+            yield f"data: {token.replace(chr(10), chr(92) + 'n')}\n\n"
+        # Save a zero-cost ChatMessage so history stays intact.
+        _msg_pk = ""
+        try:
+            if source == "session_cache":
+                _prov  = cfg_active.provider
+                _model = (cfg_active.gemini_model if _prov == "gemini"
+                          else cfg_active.sarvam_model if _prov == "sarvam"
+                          else cfg_active.ollama_model)
+            else:
+                _prov, _model = "cache", "liked_qa"
+            _msg = ChatMessage.objects.create(
+                session               = session_obj,
+                provider              = _prov,
+                model_name            = _model,
+                question              = question,
+                answer                = answer_text,
+                input_tokens          = 0,
+                output_tokens         = 0,
+                total_tokens          = 0,
+                total_cost            = _D(0),
+                response_time_seconds = time.perf_counter() - _t0,
+                answer_source         = source,
+            )
+            from django.db.models import F as _F
+            ChatSession.objects.filter(pk=session_obj.pk).update(
+                message_count=_F("message_count") + 1,
+                document_name=doc.original_filename,
+            )
+            _msg_pk = str(_msg.pk)
+            logger.info(
+                "Cache-hit saved | source=%s | session_pk=%d | msg_pk=%s",
+                source, session_obj.pk, _msg_pk,
+            )
+        except Exception as _db_exc:
+            logger.error("Cache-hit DB save failed: %s", _db_exc)
+        yield f"data: [DONE:{_msg_pk}]\n\n"
+
+    # Layer 1 — session cache (fastest, no DB or network)
+    if question_embedding is not None:
+        from .cache import get_cached_answer
+        _cached = get_cached_answer(session_obj.session_key, question_embedding)
+        if _cached:
+            resp = StreamingHttpResponse(
+                _stream_cache_hit(_cached, "session_cache"),
+                content_type="text/event-stream",
+            )
+            resp["Cache-Control"]     = "no-cache"
+            resp["X-Accel-Buffering"] = "no"
+            return resp
+
+    # Layer 2 — liked-QA Qdrant cache (cross-session, human-verified answers)
+    if question_embedding is not None and qdrant_collection:
+        try:
+            from .pipeline import search_liked_qa
+            _liked_result = search_liked_qa(question_embedding, qdrant_collection)
+            if _liked_result:
+                _liked_answer, _ = _liked_result
+                # Also warm the session cache so subsequent identical questions
+                # are served from Layer 1 (no Qdrant round-trip).
+                from .cache import add_to_cache
+                add_to_cache(session_obj.session_key, question_embedding,
+                             question, _liked_answer)
+                resp = StreamingHttpResponse(
+                    _stream_cache_hit(_liked_answer, "liked_qa"),
+                    content_type="text/event-stream",
+                )
+                resp["Cache-Control"]     = "no-cache"
+                resp["X-Accel-Buffering"] = "no"
+                return resp
+        except Exception as _lqa_exc:
+            logger.warning("Liked-QA search failed (continuing to LLM): %s", _lqa_exc)
+    # ── end cache layers ───────────────────────────────────────────────────────
+
     def _rag_query(q: str, hist: list) -> str:
         """
         For short follow-up questions (≤ 8 words) prepend the last user turn so
@@ -595,6 +696,7 @@ def chat_view(request):
 
         full_response: list[str] = []
         usage_out: dict = {}
+        _saved_msg_pk = None
         t0 = time.perf_counter()
         try:
             if cfg_active.agent_mode:
@@ -684,6 +786,7 @@ def chat_view(request):
             total_tokens         = input_tokens + output_tokens
             estimated            = usage_out.get("estimated", False)
 
+            gemini_explicit_cache = usage_out.get("gemini_explicit_cache", False)
             try:
                 pricing = ModelPricing.objects.get(provider=provider, model_name=model, is_active=True)
                 # Non-cached input at standard rate
@@ -698,7 +801,6 @@ def chat_view(request):
                 # Storage: only billed when WE created an explicit Gemini cache.
                 # Gemini's automatic/implicit caching gives a read-rate discount but
                 # does not incur a separate storage charge.
-                gemini_explicit_cache = usage_out.get("gemini_explicit_cache", False)
                 cache_storage_cost = (
                     Decimal(cached_input_tokens) * pricing.cache_storage_price_per_million_per_hour / Decimal(1_000_000)
                     if gemini_explicit_cache and cached_input_tokens and pricing.cache_storage_price_per_million_per_hour
@@ -716,7 +818,7 @@ def chat_view(request):
                 total_cost, cache_read_cost, cache_storage_cost,
             )
 
-            ChatMessage.objects.create(
+            _saved_msg = ChatMessage.objects.create(
                 session=session_obj,
                 provider=provider,
                 model_name=model,
@@ -733,7 +835,20 @@ def chat_view(request):
                 cache_storage_cost=cache_storage_cost,
                 total_cost=total_cost,
                 response_time_seconds=elapsed,
+                answer_source="llm",
             )
+            _saved_msg_pk = _saved_msg.pk
+
+            # Warm the session cache so the next identical/similar question
+            # is served instantly without hitting the vector DB or LLM.
+            if question_embedding is not None:
+                from .cache import add_to_cache
+                add_to_cache(
+                    session_obj.session_key,
+                    question_embedding,
+                    question,
+                    "".join(full_response),
+                )
 
             ChatSession.objects.filter(pk=session_obj.pk).update(
                 total_input_tokens         =F("total_input_tokens")          + input_tokens,
@@ -778,9 +893,10 @@ def chat_view(request):
                 ).start()
                 logger.info("Agent memory update scheduled | email=%s", session_obj.user_email)
 
-        # ── [DONE] always sent regardless of DB save result ───────────────────
-
-        yield "data: [DONE]\n\n"
+        # ── [DONE:{pk}] always sent regardless of DB save result ─────────────
+        # The message PK is included so the frontend can attach like/dislike
+        # feedback to the correct ChatMessage record.
+        yield f"data: [DONE:{_saved_msg_pk or ''}]\n\n"
 
     response = StreamingHttpResponse(generate(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
@@ -821,6 +937,67 @@ def reset_view(request):
     Log the end of a session. The actual reset is done on the frontend by clearing
     the localStorage token. DB records are preserved for admin reporting.
     """
+    from .cache import clear_session_cache
     session_obj = _get_chat_session(request)
+    if session_obj:
+        clear_session_cache(session_obj.session_key)
     logger.info("Reset | session_pk=%s", session_obj.pk if session_obj else "—")
+    return Response({"status": "ok"})
+
+
+# ── Feedback (like / dislike) ──────────────────────────────────────────────────
+
+@extend_schema(
+    summary="Submit thumbs-up / thumbs-down feedback for a message",
+    request=inline_serializer("FeedbackRequest", fields={
+        "message_id": s.IntegerField(),
+        "liked": s.BooleanField(),
+    }),
+    responses={200: inline_serializer("FeedbackResponse", fields={
+        "status": s.ChoiceField(choices=["ok"]),
+    })},
+)
+@api_view(["POST"])
+def feedback_view(request):
+    """
+    Record like/dislike for a ChatMessage.
+    - liked=True  → update DB + store Q&A in liked-QA Qdrant collection (LLM answers only).
+    - liked=False → update DB only (kept for analytics).
+    """
+    from .models import ChatMessage
+    from .pipeline import add_liked_qa_to_qdrant, get_question_embedding
+
+    message_id = request.data.get("message_id")
+    liked = request.data.get("liked")
+
+    if message_id is None or liked is None:
+        return Response({"error": "message_id and liked are required"}, status=400)
+
+    try:
+        msg = ChatMessage.objects.select_related("session").get(pk=message_id)
+    except ChatMessage.DoesNotExist:
+        return Response({"error": "message not found"}, status=404)
+
+    msg.liked = bool(liked)
+
+    if liked and msg.answer_source == "llm" and msg.session.document_name:
+        # Store Q&A in liked-QA Qdrant so future sessions can benefit.
+        try:
+            from .models import Document
+            doc = Document.objects.filter(
+                original_filename=msg.session.document_name, is_active=True
+            ).first()
+            if doc and doc.qdrant_collection:
+                emb = get_question_embedding(msg.question)
+                point_id = add_liked_qa_to_qdrant(
+                    msg.question, msg.answer, emb, doc.qdrant_collection, msg.pk
+                )
+                msg.liked_qa_qdrant_id = point_id
+                logger.info(
+                    "Liked Q&A stored | msg_pk=%s | qdrant_id=%s", msg.pk, point_id
+                )
+        except Exception as exc:
+            logger.warning("Failed to store liked Q&A in Qdrant | msg_pk=%s | err=%s", message_id, exc)
+
+    msg.save(update_fields=["liked", "liked_qa_qdrant_id"])
     return Response({"status": "ok"})

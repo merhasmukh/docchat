@@ -149,6 +149,9 @@ async function loadHistory() {
         const bubble = appendAssistantBubble();
         bubble.classList.remove("streaming");
         setAssistantContent(bubble, msg.content);
+        if (msg.id) {
+          _attachFeedbackButtons(bubble, msg.id, msg.liked);
+        }
       }
     }
     scrollToBottom();
@@ -554,9 +557,15 @@ async function streamChat(question, bubble) {
         if (!line.startsWith("data: ")) continue;
         const token = line.slice(6);
 
-        if (token === "[DONE]") {
+        if (token === "[DONE]" || token.startsWith("[DONE:")) {
           setAssistantContent(bubble, rawText);
           bubble.classList.remove("streaming");
+          // Reveal feedback buttons if we have a message PK
+          const match = token.match(/^\[DONE:(\d+)\]$/);
+          if (match) {
+            const msgId = parseInt(match[1], 10);
+            _attachFeedbackButtons(bubble, msgId, null);
+          }
           setInputEnabled(true);
           scrollToBottom();
           return;
@@ -615,12 +624,74 @@ function appendAssistantBubble() {
     });
   });
 
+  const likeBtn = document.createElement("button");
+  likeBtn.className = "feedback-btn like-btn";
+  likeBtn.title = "Good answer";
+  likeBtn.hidden = true;
+  likeBtn.innerHTML = '<i class="fa-regular fa-thumbs-up"></i>';
+
+  const dislikeBtn = document.createElement("button");
+  dislikeBtn.className = "feedback-btn dislike-btn";
+  dislikeBtn.title = "Bad answer";
+  dislikeBtn.hidden = true;
+  dislikeBtn.innerHTML = '<i class="fa-regular fa-thumbs-down"></i>';
+
   actions.appendChild(copyBtn);
+  actions.appendChild(likeBtn);
+  actions.appendChild(dislikeBtn);
   wrapper.appendChild(div);
   wrapper.appendChild(actions);
   chatWindow.appendChild(wrapper);
   scrollToBottom();
   return div;
+}
+
+function _attachFeedbackButtons(bubble, msgId, liked = null) {
+  const actions = bubble.parentElement && bubble.parentElement.querySelector(".bubble-actions");
+  if (!actions) return;
+  const likeBtn = actions.querySelector(".like-btn");
+  const dislikeBtn = actions.querySelector(".dislike-btn");
+  if (!likeBtn || !dislikeBtn) return;
+
+  likeBtn.hidden = false;
+  dislikeBtn.hidden = false;
+
+  // Restore previous feedback state
+  if (liked === true) {
+    likeBtn.classList.add("active");
+    likeBtn.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else if (liked === false) {
+    dislikeBtn.classList.add("active");
+    dislikeBtn.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else {
+    likeBtn.addEventListener("click", () => _submitFeedback(msgId, true, likeBtn, dislikeBtn));
+    dislikeBtn.addEventListener("click", () => _submitFeedback(msgId, false, likeBtn, dislikeBtn));
+  }
+}
+
+async function _submitFeedback(msgId, liked, likeBtn, dislikeBtn) {
+  // Optimistic UI update
+  likeBtn.classList.toggle("active", liked);
+  dislikeBtn.classList.toggle("active", !liked);
+  likeBtn.disabled = true;
+  dislikeBtn.disabled = true;
+
+  try {
+    await fetch("/feedback/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Chat-Token": localStorage.getItem("chatToken") || "",
+      },
+      body: JSON.stringify({ message_id: msgId, liked }),
+    });
+  } catch (_) {
+    // Fire-and-forget; UI already updated
+  }
 }
 
 function setAssistantContent(bubble, rawMarkdown) {

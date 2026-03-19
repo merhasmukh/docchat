@@ -23,7 +23,7 @@ from .providers.gemini import create_gemini_cache, delete_gemini_cache, GeminiUn
 
 # Ordered fallback models tried when the primary Gemini model returns 503 UNAVAILABLE.
 # The primary model (from LLMConfig) is always tried first; these are fallbacks only.
-_GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
 
 # ── OCR backends ───────────────────────────────────────────────────────────────
@@ -232,6 +232,18 @@ def convert_to_markdown(input_path: str) -> tuple[str, dict]:
 
 # ── RAG helpers (BM25 + multilingual embeddings) ──────────────────────────────
 
+import re as _re
+
+# Collapse dotted abbreviations so "M.C.A." and "MCA" tokenise identically.
+# Matches 2+ single letters separated by dots, with an optional trailing dot.
+# Examples: M.C.A. → MCA   B.C.A → BCA   M.A. → MA
+_ABBR_RE = _re.compile(r'\b([A-Za-z]\.){2,}[A-Za-z]?\b')
+
+
+def _normalize_abbr(text: str) -> str:
+    """Strip dots from dotted abbreviations to unify 'M.C.A.' with 'MCA'."""
+    return _ABBR_RE.sub(lambda m: m.group(0).replace(".", ""), text)
+
 _st_model = None
 
 def _get_st_model():
@@ -340,8 +352,8 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
             collection_name=collection_name, with_payload=True, limit=10_000
         )
         chunks    = [{"page": p.payload["page"], "text": p.payload["text"]} for p in all_points]
-        tokenized = [c["text"].lower().split() for c in chunks]
-        scores    = BM25Okapi(tokenized).get_scores(question.lower().split())
+        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
+        scores    = BM25Okapi(tokenized).get_scores(_normalize_abbr(question).lower().split())
         ranked    = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
         selected  = sorted(ranked)
         result    = "\n\n---\n\n".join(
@@ -349,10 +361,11 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
         )
         method_used = "bm25"
     else:
+        norm_q = _normalize_abbr(question)
         q_emb = (
-            _embed_local([question])[0]
+            _embed_local([norm_q])[0]
             if embedding_method == "multilingual_local"
-            else _embed_gemini([question])[0]
+            else _embed_gemini([norm_q])[0]
         )
         hits = client.query_points(
             collection_name=collection_name,
@@ -425,13 +438,17 @@ def build_rag_chunks(pages_data: dict, embedding_method: str) -> list[dict]:
 
     if embedding_method == "multilingual_local":
         t0 = time.perf_counter()
-        embeddings = _embed_local([c["text"] for c in chunks])
+        # Normalize abbreviations before embedding so "mca" queries match "M.C.A." chunks.
+        # The original text is kept in chunk["text"] for display; only the embedding uses norm.
+        norm_texts = [_normalize_abbr(c["text"]) for c in chunks]
+        embeddings = _embed_local(norm_texts)
         for chunk, emb in zip(chunks, embeddings):
             chunk["embedding"] = emb
         logger.info("Local embeddings built | chunks=%d | time=%.2fs", len(chunks), time.perf_counter() - t0)
     elif embedding_method == "gemini_embedding":
         t0 = time.perf_counter()
-        embeddings = _embed_gemini([c["text"] for c in chunks])
+        norm_texts = [_normalize_abbr(c["text"]) for c in chunks]
+        embeddings = _embed_gemini(norm_texts)
         for chunk, emb in zip(chunks, embeddings):
             chunk["embedding"] = emb
         logger.info("Gemini embeddings built | chunks=%d | time=%.2fs", len(chunks), time.perf_counter() - t0)
@@ -455,17 +472,18 @@ def retrieve_relevant_context(question: str, chunks_path: str,
     has_embeddings = "embedding" in chunks[0]
 
     if embedding_method != "bm25" and has_embeddings:
+        norm_q = _normalize_abbr(question)
         if embedding_method == "multilingual_local":
-            q_emb = _embed_local([question])[0]
+            q_emb = _embed_local([norm_q])[0]
         else:
-            q_emb = _embed_gemini([question])[0]
+            q_emb = _embed_gemini([norm_q])[0]
         scores = _cosine_scores(q_emb, [c["embedding"] for c in chunks])
     else:
         if embedding_method != "bm25":
             logger.warning("Embeddings missing in chunks — falling back to BM25")
-        tokenized = [c["text"].lower().split() for c in chunks]
+        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
         bm25 = BM25Okapi(tokenized)
-        scores = bm25.get_scores(question.lower().split())
+        scores = bm25.get_scores(_normalize_abbr(question).lower().split())
 
     ranked   = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     selected = sorted(ranked)
@@ -479,6 +497,123 @@ def retrieve_relevant_context(question: str, chunks_path: str,
         len(question), top_k, [chunks[i]["page"] for i in selected],
     )
     return result
+
+
+# ── Liked-QA Qdrant cache ──────────────────────────────────────────────────────
+
+_LIKED_SUFFIX     = "_liked"
+_LIKED_VECTOR_DIM = 384   # sentence-transformers multilingual-local, always
+
+
+def get_question_embedding(question: str) -> "np.ndarray":
+    """
+    Compute a sentence-transformer embedding for *question*.
+
+    Always uses multilingual-local (384-dim, L2-normalised) regardless of the
+    RAG embedding setting so the session cache and liked-QA lookup share a
+    single, consistent vector space.
+    """
+    import numpy as np
+    return np.array(_embed_local([question])[0], dtype=np.float32)
+
+
+def _liked_col(base: str) -> str:
+    return base + _LIKED_SUFFIX
+
+
+def _ensure_liked_collection(base: str) -> None:
+    """Create the liked-QA Qdrant collection if it does not already exist."""
+    from qdrant_client.models import Distance, VectorParams
+    client = get_qdrant_client()
+    col    = _liked_col(base)
+    names  = {c.name for c in client.get_collections().collections}
+    if col not in names:
+        client.create_collection(
+            collection_name=col,
+            vectors_config=VectorParams(size=_LIKED_VECTOR_DIM, distance=Distance.COSINE),
+        )
+        logger.info("Liked-QA collection created: %s", col)
+
+
+def search_liked_qa(
+    question_embedding: "np.ndarray",
+    base_collection: str,
+    threshold: float = 0.90,
+) -> "tuple[str, float] | None":
+    """
+    Search the liked-QA Qdrant collection for an answer whose question
+    embedding is ≥ *threshold* similar to *question_embedding*.
+
+    Returns (answer_text, score) on a hit, or None on a miss / missing collection.
+    """
+    client = get_qdrant_client()
+    col    = _liked_col(base_collection)
+    names  = {c.name for c in client.get_collections().collections}
+    if col not in names:
+        return None
+
+    hits = client.query_points(
+        collection_name=col,
+        query=question_embedding.tolist(),
+        limit=1,
+        with_payload=True,
+        score_threshold=threshold,
+    ).points
+
+    if not hits:
+        return None
+
+    best = hits[0]
+    logger.info(
+        "Liked-QA HIT | collection=%s | score=%.3f | q=%r",
+        col, best.score, best.payload.get("question", "")[:80],
+    )
+    return best.payload["answer"], best.score
+
+
+def add_liked_qa_to_qdrant(
+    question: str,
+    answer: str,
+    question_embedding: "np.ndarray",
+    base_collection: str,
+    message_id: int,
+) -> int:
+    """
+    Store a liked Q&A pair in the liked-QA Qdrant collection.
+    Returns the Qdrant point ID (a random 63-bit integer).
+    """
+    import random
+    from qdrant_client.models import PointStruct
+
+    _ensure_liked_collection(base_collection)
+    client   = get_qdrant_client()
+    col      = _liked_col(base_collection)
+    point_id = random.getrandbits(63)
+
+    client.upsert(
+        collection_name=col,
+        points=[PointStruct(
+            id=point_id,
+            vector=question_embedding.tolist(),
+            payload={"question": question, "answer": answer, "message_id": message_id},
+        )],
+    )
+    logger.info(
+        "Liked-QA added | collection=%s | point_id=%d | message_id=%d",
+        col, point_id, message_id,
+    )
+    return point_id
+
+
+def delete_liked_collection(base_collection: str) -> None:
+    """Remove the liked-QA collection for a document (called on document delete)."""
+    client = get_qdrant_client()
+    col    = _liked_col(base_collection)
+    try:
+        client.delete_collection(col)
+        logger.info("Liked-QA collection deleted: %s", col)
+    except Exception as exc:
+        logger.warning("Could not delete liked-QA collection %s: %s", col, exc)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

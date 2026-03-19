@@ -7,6 +7,7 @@ from google.genai import types as genai_types
 
 from .utils import (
     CONVERSATIONAL_SYSTEM_PROMPT,
+    add_language_hint,
     build_document_instruction,
     build_document_prompt,
     is_conversational,
@@ -25,7 +26,7 @@ class GeminiUnavailableError(Exception):
 
 # ── Context cache ──────────────────────────────────────────────────────────────
 
-def create_gemini_cache(markdown_text: str, model_name: str) -> str or None:
+def create_gemini_cache(markdown_text: str, model_name: str) -> str | None:
     """
     Create a Gemini context cache for the document.
     Returns the cache name (e.g. 'cachedContents/abc123') or None on failure.
@@ -71,28 +72,18 @@ def delete_gemini_cache(cache_name: str) -> None:
 
 # ── Chat helpers ───────────────────────────────────────────────────────────────
 
-_LANG_HINT = (
-    "\n\n[CRITICAL LANGUAGE RULE: Your reply MUST be in the exact same language as the question above. "
-    "If the question has Gujarati words/script → reply in Gujarati (keep English acronyms as-is). "
-    "If the question has Hindi/Devanagari words → reply in Hindi. "
-    "If the question is English only → reply in English. "
-    "NEVER translate a Gujarati or Hindi question into English.]"
-)
-
-
-def _build_gemini_contents(question: str, history: list, lang_hint: bool = False) -> list:
+def _build_gemini_contents(question: str, history: list) -> list:
     """Convert Ollama-style message history to Gemini Content objects."""
     contents = []
     for m in history[-10:]:
         role = "model" if m["role"] == "assistant" else m["role"]
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
-    text = question + _LANG_HINT if lang_hint else question
-    contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=text)]))
+    contents.append(genai_types.Content(role="user", parts=[genai_types.Part(text=add_language_hint(question))]))
     return contents
 
 
 def _ask_streaming_gemini(question: str, history: list, markdown_text: str, model_name: str,
-                           usage_out: dict or None = None, cache_name: str or None = None,
+                           usage_out: dict | None = None, cache_name: str | None = None,
                            fallback_contact: str = ""):
     conversational = is_conversational(question)
     # Bypass cache for conversational messages — the cache's system_instruction
@@ -105,7 +96,7 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     t0 = time.perf_counter()
     output_chars = 0
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    contents = _build_gemini_contents(question, history, lang_hint=not conversational)
+    contents = _build_gemini_contents(question, history)
 
     if conversational:
         llm_config = genai_types.GenerateContentConfig(system_instruction=CONVERSATIONAL_SYSTEM_PROMPT)
@@ -186,7 +177,7 @@ def _ask_gemini(question: str, history: list, markdown_text: str, model_name: st
     else:
         system = build_document_prompt(markdown_text, fallback_contact)
     config = genai_types.GenerateContentConfig(system_instruction=system)
-    contents = _build_gemini_contents(question, history, lang_hint=not is_conversational(question))
+    contents = _build_gemini_contents(question, history)
     t0 = time.perf_counter()
     response = client.models.generate_content(model=model_name, contents=contents, config=config)
     elapsed = time.perf_counter() - t0

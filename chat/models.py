@@ -96,6 +96,31 @@ class ChatMessage(models.Model):
     total_cost            = models.DecimalField(max_digits=14, decimal_places=6, default=0)
     response_time_seconds = models.FloatField(default=0)
 
+    # ── Feedback & cache provenance ────────────────────────────────────────────
+    ANSWER_SOURCE_CHOICES = [
+        ("llm",          "LLM (normal call)"),
+        ("session_cache", "Session cache"),
+        ("liked_qa",     "Liked Q&A cache"),
+    ]
+    answer_source = models.CharField(
+        max_length=20,
+        choices=ANSWER_SOURCE_CHOICES,
+        default="llm",
+        help_text="Where this answer was sourced from.",
+    )
+    liked = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="None = no feedback yet; True = thumbs up; False = thumbs down.",
+    )
+    liked_qa_qdrant_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Qdrant point ID in the liked-QA collection (populated when answer is liked).",
+    )
+
     class Meta:
         verbose_name = "Chat Message"
         ordering     = ["-created_at"]

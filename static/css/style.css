@@ -335,6 +335,21 @@ body {
 }
 .copy-btn:hover { background: var(--primary); color: var(--accent); border-color: var(--primary-dark); }
 
+.feedback-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  font-family: inherit;
+}
+.feedback-btn:hover { background: var(--primary); color: var(--accent); border-color: var(--primary-dark); }
+.feedback-btn.active { color: var(--accent); border-color: var(--accent); }
+.feedback-btn:disabled { cursor: default; }
+
 .bubble {
   padding: 0.72rem 1.05rem;
   border-radius: 18px;

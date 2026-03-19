@@ -329,7 +329,7 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def _cleanup_document(self, doc):
         from .providers.gemini import delete_gemini_cache
-        from .pipeline import get_qdrant_client
+        from .pipeline import get_qdrant_client, delete_liked_collection
         for path_field in ("markdown_path", "json_path", "rag_chunks_path"):
             path = getattr(doc, path_field, "")
             if path and os.path.exists(path):
@@ -339,6 +339,10 @@ class DocumentAdmin(admin.ModelAdmin):
                 get_qdrant_client().delete_collection(doc.qdrant_collection)
             except Exception as exc:
                 logger.warning("Failed to delete Qdrant collection %s: %s", doc.qdrant_collection, exc)
+            try:
+                delete_liked_collection(doc.qdrant_collection)
+            except Exception as exc:
+                logger.warning("Failed to delete liked-QA collection for %s: %s", doc.qdrant_collection, exc)
         if doc.gemini_cache_name:
             delete_gemini_cache(doc.gemini_cache_name)
 
@@ -483,7 +487,7 @@ class ChatMessageInline(admin.TabularInline):
     show_change_link = True
     readonly_fields = (
         "created_at", "provider", "model_name",
-        "question", "answer",
+        "question", "answer", "answer_source", "liked",
         "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
         "input_cost", "output_cost", "cache_read_cost", "cache_storage_cost", "total_cost",
         "response_time_seconds",
@@ -540,14 +544,14 @@ class ChatSessionAdmin(admin.ModelAdmin):
 class ChatMessageAdmin(admin.ModelAdmin):
     list_display  = ("created_at", "session_short", "provider", "model_name",
                      "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens",
-                     "question", "answer",
+                     "question", "answer", "answer_source", "liked",
                      "tokens_estimated", "total_cost_inr", "response_time_seconds")
-    list_filter   = ("provider", "model_name", "tokens_estimated")
+    list_filter   = ("provider", "model_name", "tokens_estimated", "answer_source", "liked")
     search_fields = ("question", "session__session_key", "model_name")
     ordering      = ["-created_at"]
     readonly_fields = (
         "session", "created_at", "provider", "model_name",
-        "question", "answer",
+        "question", "answer", "answer_source", "liked", "liked_qa_qdrant_id",
         "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens", "tokens_estimated",
         "input_cost", "output_cost", "cache_read_cost", "cache_storage_cost", "total_cost",
         "response_time_seconds",
