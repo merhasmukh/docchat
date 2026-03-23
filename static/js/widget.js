@@ -17,8 +17,10 @@
  *   data-position  "bottom-right" (default) or "bottom-left".
  *   data-color     Accent colour for the bubble and widget header. Default: #432323.
  *   data-title     Widget header title. Default: "DocChat".
- *   data-greeting  Optional opening message shown as the first assistant bubble.
- *   data-mode      "popup" (default corner popup) or "fullpage" (full viewport overlay).
+ *   data-greeting    Optional opening message shown as the first assistant bubble.
+ *   data-nudge       Optional proactive message shown if the user hasn't typed after data-nudge-delay seconds.
+ *   data-nudge-delay Seconds to wait before showing the nudge message. Default: 10.
+ *   data-mode        "popup" (default corner popup) or "fullpage" (full viewport overlay).
  */
 (function () {
   'use strict';
@@ -26,12 +28,14 @@
   var s = document.currentScript;
   if (!s) return; // guard: loaded async/defer
 
-  var server   = (s.getAttribute('data-server')   || '').replace(/\/$/, '');
-  var position = s.getAttribute('data-position')  || 'bottom-right';
-  var color    = s.getAttribute('data-color')     || '#735557';
-  var title    = s.getAttribute('data-title')     || 'DocChat';
-  var greeting = s.getAttribute('data-greeting')  || '';
-  var mode     = s.getAttribute('data-mode')      || 'popup';
+  var server     = (s.getAttribute('data-server')   || '').replace(/\/$/, '');
+  var position   = s.getAttribute('data-position')  || 'bottom-right';
+  var color      = s.getAttribute('data-color')     || '#C45500';
+  var title      = s.getAttribute('data-title')     || 'DocChat';
+  var greeting   = s.getAttribute('data-greeting')  || '';
+  var nudge      = s.getAttribute('data-nudge')     || '';
+  var nudgeDelay = s.getAttribute('data-nudge-delay') || '10';
+  var mode       = s.getAttribute('data-mode')      || 'popup';
 
   if (!server) {
     console.warn('[DocChat] data-server attribute is required.');
@@ -42,7 +46,7 @@
   var edge    = isRight ? 'right' : 'left';
 
   // ── Build iframe URL ──────────────────────────────────────────────────────
-  var params = new URLSearchParams({ color: color, title: title, greeting: greeting, mode: mode });
+  var params = new URLSearchParams({ color: color, title: title, greeting: greeting, nudge: nudge, nudge_delay: nudgeDelay, mode: mode });
   var iframeUrl = server + '/widget/?' + params.toString();
 
   // ── Inject styles ─────────────────────────────────────────────────────────
@@ -69,7 +73,7 @@
     '  bottom:calc(92px + env(safe-area-inset-bottom,0px));',
     '  width:380px;height:560px;',
     '  border-radius:16px;overflow:hidden;',
-    '  box-shadow:0 8px 32px rgba(0,0,0,.22);',
+    '  box-shadow:0 8px 32px rgba(196,85,0,.18);',
     '  z-index:999997;display:none;',
     '  transform:scale(.95) translateY(8px);opacity:0;',
     '  transition:transform .2s,opacity .2s;',
@@ -142,6 +146,7 @@
       if (coveringViewport()) btn.classList.add('dc-top');
       wrap.classList.add('dc-open');
       requestAnimationFrame(function () { wrap.classList.add('dc-visible'); });
+      frame.contentWindow.postMessage({ type: 'docchat:opened' }, server || '*');
     } else {
       btn.classList.remove('dc-top');
       wrap.classList.remove('dc-visible');

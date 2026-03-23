@@ -130,7 +130,7 @@ def history_view(request):
             "liked":   msg.liked,
         })
 
-    return Response({"messages": messages})
+    return Response({"messages": messages, "user_name": session_obj.user_name or ""})
 
 
 # ── Email OTP helpers ──────────────────────────────────────────────────────────
@@ -608,7 +608,7 @@ def chat_view(request):
         yield f"data: [DONE:{_msg_pk}]\n\n"
 
     # Layer 1 — session cache (fastest, no DB or network)
-    if question_embedding is not None:
+    if question_embedding is not None and cfg_active.use_session_cache:
         from .cache import get_cached_answer
         _cached = get_cached_answer(session_obj.session_key, question_embedding)
         if _cached:
@@ -965,7 +965,6 @@ def feedback_view(request):
     - liked=False → update DB only (kept for analytics).
     """
     from .models import ChatMessage
-    from .pipeline import add_liked_qa_to_qdrant, get_question_embedding
 
     message_id = request.data.get("message_id")
     liked = request.data.get("liked")
@@ -974,30 +973,10 @@ def feedback_view(request):
         return Response({"error": "message_id and liked are required"}, status=400)
 
     try:
-        msg = ChatMessage.objects.select_related("session").get(pk=message_id)
+        msg = ChatMessage.objects.get(pk=message_id)
     except ChatMessage.DoesNotExist:
         return Response({"error": "message not found"}, status=404)
 
     msg.liked = bool(liked)
-
-    if liked and msg.answer_source == "llm" and msg.session.document_name:
-        # Store Q&A in liked-QA Qdrant so future sessions can benefit.
-        try:
-            from .models import Document
-            doc = Document.objects.filter(
-                original_filename=msg.session.document_name, is_active=True
-            ).first()
-            if doc and doc.qdrant_collection:
-                emb = get_question_embedding(msg.question)
-                point_id = add_liked_qa_to_qdrant(
-                    msg.question, msg.answer, emb, doc.qdrant_collection, msg.pk
-                )
-                msg.liked_qa_qdrant_id = point_id
-                logger.info(
-                    "Liked Q&A stored | msg_pk=%s | qdrant_id=%s", msg.pk, point_id
-                )
-        except Exception as exc:
-            logger.warning("Failed to store liked Q&A in Qdrant | msg_pk=%s | err=%s", message_id, exc)
-
-    msg.save(update_fields=["liked", "liked_qa_qdrant_id"])
+    msg.save(update_fields=["liked"])
     return Response({"status": "ok"})

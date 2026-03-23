@@ -106,7 +106,7 @@ class DocumentAdmin(admin.ModelAdmin):
     list_display_links = ("original_filename",)
     list_filter  = ("status", "is_active", "context_mode")
     ordering     = ["-created_at"]
-    actions      = ["make_active"]
+    actions      = ["make_active", "retry_rag_indexing"]
 
     # ── Field layout ──────────────────────────────────────────────────────────
 
@@ -181,8 +181,13 @@ class DocumentAdmin(admin.ModelAdmin):
             with open(md_path, "w", encoding="utf-8") as fh:
                 fh.write(markdown_text)
 
+            cfg = LLMConfig.get_active()
             if mode_choice == "rag":
-                pages_data = split_text_into_pages(markdown_text)
+                pages_data = split_text_into_pages(
+                    markdown_text,
+                    chunk_size=cfg.rag_chunk_size,
+                    chunk_overlap=cfg.rag_chunk_overlap,
+                )
             else:
                 pages_data = {
                     "total_pages": 1,
@@ -193,7 +198,6 @@ class DocumentAdmin(admin.ModelAdmin):
             with open(json_path, "w", encoding="utf-8") as fh:
                 json.dump(pages_data, fh, ensure_ascii=False, indent=2)
 
-            cfg    = LLMConfig.get_active()
             chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
             from .pipeline import store_rag_chunks_qdrant
             collection_name = f"doc_{obj.pk}"
@@ -271,6 +275,21 @@ class DocumentAdmin(admin.ModelAdmin):
             doc_chars    = len(markdown_text)
             context_mode = "rag" if doc_chars > threshold else "full"
 
+            # ── CHECKPOINT: persist OCR output before any embedding API calls ──
+            # If embedding or Qdrant fails below, markdown_path/json_path are
+            # already in the DB so "Retry RAG indexing" can resume without re-OCR.
+            obj.markdown_path = md_path
+            obj.json_path     = json_path
+            obj.char_count    = doc_chars
+            obj.total_pages   = pages_data["total_pages"]
+            obj.context_mode  = context_mode
+            obj.status        = "ocr_done"
+            obj.save(update_fields=[
+                "markdown_path", "json_path", "char_count",
+                "total_pages", "context_mode", "status",
+            ])
+            # ────────────────────────────────────────────────────────────────────
+
             cfg    = LLMConfig.get_active()
             chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
             from .pipeline import store_rag_chunks_qdrant
@@ -281,13 +300,8 @@ class DocumentAdmin(admin.ModelAdmin):
             if context_mode == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
                 gemini_cache_name = create_gemini_cache(markdown_text, cfg.gemini_model)
 
-            obj.markdown_path     = md_path
-            obj.json_path         = json_path
             obj.qdrant_collection = collection_name
             obj.gemini_cache_name = gemini_cache_name or ""
-            obj.total_pages       = pages_data["total_pages"]
-            obj.char_count        = doc_chars
-            obj.context_mode      = context_mode
             obj.status            = "ready"
 
             elapsed = time.perf_counter() - t0
@@ -325,6 +339,79 @@ class DocumentAdmin(admin.ModelAdmin):
         doc.save()
         self.message_user(request, f"'{doc.original_filename}' is now the active document.")
 
+    @admin.action(description="Retry RAG indexing (skip OCR, use saved OCR output)")
+    def retry_rag_indexing(self, request, queryset):
+        """
+        Re-run only the embedding + Qdrant step for documents that already have
+        a json_path on disk (OCR succeeded but indexing failed).
+        Skips full OCR — no Gemini Vision API calls made.
+        """
+        import json as _json
+        from .pipeline import build_rag_chunks, store_rag_chunks_qdrant, get_qdrant_client
+        from .models import LLMConfig
+        from .providers.gemini import create_gemini_cache, delete_gemini_cache
+
+        cfg = LLMConfig.get_active()
+        ok = err = 0
+
+        for doc in queryset:
+            if not doc.json_path or not os.path.exists(doc.json_path):
+                self.message_user(
+                    request,
+                    f"'{doc.original_filename}': no OCR output found on disk — re-upload required.",
+                    level="warning",
+                )
+                continue
+
+            try:
+                with open(doc.json_path, encoding="utf-8") as fh:
+                    pages_data = _json.load(fh)
+
+                collection_name = f"doc_{doc.pk}"
+
+                # Clean up old Qdrant collection and Gemini cache if they exist
+                if doc.qdrant_collection:
+                    try:
+                        get_qdrant_client().delete_collection(doc.qdrant_collection)
+                    except Exception:
+                        pass
+                if doc.gemini_cache_name:
+                    try:
+                        delete_gemini_cache(doc.gemini_cache_name)
+                    except Exception:
+                        pass
+
+                chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
+                store_rag_chunks_qdrant(chunks, collection_name, cfg.rag_embedding)
+
+                gemini_cache_name = None
+                if doc.context_mode == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
+                    with open(doc.markdown_path, encoding="utf-8") as fh:
+                        markdown_text = fh.read()
+                    gemini_cache_name = create_gemini_cache(markdown_text, cfg.gemini_model)
+
+                doc.qdrant_collection = collection_name
+                doc.gemini_cache_name = gemini_cache_name or ""
+                doc.status            = "ready"
+                doc.error_message     = ""
+                doc.save(update_fields=["qdrant_collection", "gemini_cache_name", "status", "error_message"])
+
+                self.message_user(
+                    request,
+                    f"'{doc.original_filename}' re-indexed successfully ({len(chunks)} chunks).",
+                )
+                ok += 1
+
+            except Exception as exc:
+                doc.status        = "error"
+                doc.error_message = str(exc)
+                doc.save(update_fields=["status", "error_message"])
+                self.message_user(request, f"'{doc.original_filename}' indexing failed: {exc}", level="error")
+                err += 1
+
+        if ok:
+            self.message_user(request, f"{ok} document(s) re-indexed successfully.")
+
     # ── Delete: clean up disk files and Gemini cache ──────────────────────────
 
     def _cleanup_document(self, doc):
@@ -359,7 +446,7 @@ class DocumentAdmin(admin.ModelAdmin):
 
     @admin.display(description="Status")
     def status_badge(self, obj):
-        colours = {"ready": "green", "error": "red", "pending": "orange"}
+        colours = {"ready": "green", "error": "red", "pending": "orange", "ocr_done": "blue"}
         colour  = colours.get(obj.status, "gray")
         label   = obj.get_status_display()
         return f'<span style="color:{colour};font-weight:bold">{label}</span>'
@@ -372,7 +459,8 @@ class DocumentAdmin(admin.ModelAdmin):
 @admin.register(LLMConfig)
 class LLMConfigAdmin(admin.ModelAdmin):
     list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding",
-                    "context_mode", "use_gemini_cache", "embed_script_link")
+                    "context_mode", "rag_chunk_size", "rag_chunk_overlap",
+                    "use_session_cache", "use_gemini_cache", "embed_script_link")
 
     def has_add_permission(self, request):
         return not LLMConfig.objects.exists()

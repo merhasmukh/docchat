@@ -133,9 +133,10 @@ class ChatMessage(models.Model):
 
 class Document(models.Model):
     STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("ready",   "Ready"),
-        ("error",   "Error"),
+        ("pending",  "Pending"),
+        ("ocr_done", "OCR Complete (indexing pending)"),
+        ("ready",    "Ready"),
+        ("error",    "Error"),
     ]
 
     SOURCE_CHOICES = [
@@ -249,6 +250,30 @@ class LLMConfig(models.Model):
         help_text=(
             "Enable Gemini context caching in full-context mode. "
             "Disable to send the full document with every request (no cache storage cost)."
+        ),
+    )
+    use_session_cache = models.BooleanField(
+        default=True,
+        help_text=(
+            "Enable per-session in-memory answer cache. "
+            "When ON, repeated or similar questions within the same session are answered "
+            "instantly from cache (no LLM call, zero cost). "
+            "Turn OFF to always hit the LLM for every question."
+        ),
+    )
+    rag_chunk_size = models.IntegerField(
+        default=1000,
+        help_text=(
+            "Character count per RAG chunk when splitting pasted text. "
+            "Smaller values → more chunks → finer retrieval. "
+            "Larger values → fewer chunks → more context per result. Default: 1000."
+        ),
+    )
+    rag_chunk_overlap = models.IntegerField(
+        default=100,
+        help_text=(
+            "Character overlap between consecutive RAG chunks. "
+            "Overlap ensures context at chunk boundaries is not lost. Default: 100."
         ),
     )
     agent_mode = models.BooleanField(

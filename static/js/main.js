@@ -40,8 +40,6 @@ const chatWindow      = document.getElementById("chat-window");
 const questionInput   = document.getElementById("question-input");
 const sendBtn         = document.getElementById("send-btn");
 const resetBtn        = document.getElementById("reset-btn");
-const docIndicator    = document.getElementById("doc-indicator");
-const docIndicatorTxt = document.getElementById("doc-indicator-text");
 
 // Modal refs — step 1
 const userModal       = document.getElementById("user-modal");
@@ -116,13 +114,11 @@ let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, 
 })();
 
 // ─── Mode helpers ─────────────────────────────────────────────────────────────
-function showChatMode(filename) {
+function showChatMode(_filename) {
   userModal.classList.add("hidden");
   noDocSection.classList.add("hidden");
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
-  docIndicatorTxt.textContent = filename;
-  docIndicator.classList.add("loaded");
   questionInput.focus();
 }
 
@@ -131,8 +127,6 @@ function showNoDocMode() {
   chatSection.classList.add("hidden");
   noDocSection.classList.remove("hidden");
   resetBtn.classList.add("hidden");
-  docIndicatorTxt.textContent = "No document loaded";
-  docIndicator.classList.remove("loaded");
 }
 
 // ─── Load history on session resume ──────────────────────────────────────────
@@ -163,10 +157,6 @@ function showUserModal() {
   chatSection.classList.add("hidden");
   resetBtn.classList.add("hidden");
   noDocSection.classList.add("hidden");
-  if (currentFilename) {
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
-  }
   // Show/hide fields based on admin config
   const nameField   = document.getElementById("um-field-name");
   const emailField  = document.getElementById("um-field-email");
@@ -241,7 +231,7 @@ function validateMobile() {
   const pattern = opt.dataset.pattern || "";
 
   if (!digits) {
-    mobileError.textContent = "Please enter your mobile number.";
+    mobileError.textContent = "કૃપા કરી તમારો મોબાઈલ નંબર જણાવો ";
     mobileError.classList.remove("hidden");
     return null;
   }
@@ -292,7 +282,7 @@ userForm.addEventListener("submit", async (e) => {
   const email = emailInput.value.trim();
 
   if (sessionCfg.collect_name && !name) {
-    modalError.textContent = "Please enter your name.";
+    modalError.textContent = "કૃપા કરી તમારું નામ જણાવો";
     modalError.classList.remove("hidden");
     return;
   }
@@ -476,8 +466,6 @@ modalCloseBtn.addEventListener("click", () => {
   if (currentFilename) {
     chatSection.classList.remove("hidden");
     resetBtn.classList.remove("hidden");
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
   }
 });
 
@@ -500,6 +488,13 @@ resetBtn.addEventListener("click", () => {
   showUserModal();
 });
 
+// ─── Auto-expand textarea ─────────────────────────────────────────────────────
+function autoResize() {
+  questionInput.style.height = "auto";
+  questionInput.style.height = questionInput.scrollHeight + "px";
+}
+questionInput.addEventListener("input", autoResize);
+
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 sendBtn.addEventListener("click", sendMessage);
 questionInput.addEventListener("keydown", (e) => {
@@ -512,6 +507,7 @@ function sendMessage() {
 
   appendUserBubble(question);
   questionInput.value = "";
+  questionInput.style.height = "auto";
   setInputEnabled(false);
 
   const asmBubble = appendAssistantBubble();
@@ -592,12 +588,27 @@ async function streamChat(question, bubble) {
 }
 
 // ─── Bubble builders ──────────────────────────────────────────────────────────
+function makeTimestamp() {
+  const now = new Date();
+  let h = now.getHours(), m = now.getMinutes();
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  const span = document.createElement("span");
+  span.className = "msg-time";
+  span.textContent = h + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
+  return span;
+}
+
 function appendUserBubble(text) {
   removeWelcome();
+  const wrap = document.createElement("div");
+  wrap.className = "bubble-wrapper user-wrapper";
   const div = document.createElement("div");
   div.className = "bubble user";
   div.textContent = text;
-  chatWindow.appendChild(div);
+  wrap.appendChild(div);
+  wrap.appendChild(makeTimestamp());
+  chatWindow.appendChild(wrap);
   scrollToBottom();
 }
 
@@ -641,6 +652,7 @@ function appendAssistantBubble() {
   actions.appendChild(dislikeBtn);
   wrapper.appendChild(div);
   wrapper.appendChild(actions);
+  wrapper.appendChild(makeTimestamp());
   chatWindow.appendChild(wrapper);
   scrollToBottom();
   return div;
@@ -685,7 +697,7 @@ async function _submitFeedback(msgId, liked, likeBtn, dislikeBtn) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Chat-Token": localStorage.getItem("chatToken") || "",
+        "X-Chat-Token": getToken(),
       },
       body: JSON.stringify({ message_id: msgId, liked }),
     });

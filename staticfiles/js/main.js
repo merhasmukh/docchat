@@ -40,8 +40,6 @@ const chatWindow      = document.getElementById("chat-window");
 const questionInput   = document.getElementById("question-input");
 const sendBtn         = document.getElementById("send-btn");
 const resetBtn        = document.getElementById("reset-btn");
-const docIndicator    = document.getElementById("doc-indicator");
-const docIndicatorTxt = document.getElementById("doc-indicator-text");
 
 // Modal refs — step 1
 const userModal       = document.getElementById("user-modal");
@@ -49,6 +47,9 @@ const modalCloseBtn   = document.getElementById("modal-close-btn");
 const userForm       = document.getElementById("user-form");
 const nameInput      = document.getElementById("user-name");
 const emailInput     = document.getElementById("user-email");
+const mobileInput    = document.getElementById("user-mobile");
+const countrySelect  = document.getElementById("country-code");
+const mobileError    = document.getElementById("mobile-error");
 const modalError     = document.getElementById("modal-error");
 const modalSubmitBtn = document.getElementById("modal-submit-btn");
 
@@ -71,24 +72,39 @@ let otpResendUsed     = false;
 // Track the active document filename
 let currentFilename = null;
 
-// ─── Page load: check active document + existing session token ────────────────
-(async function checkStatus() {
+// Session config (loaded from /session-config/ on page load)
+let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false };
+
+// ─── Page load: fetch session config + check active document + session ─────────
+(async function init() {
+  // Fetch config and status in parallel
+  const [cfgResult, statusResult] = await Promise.allSettled([
+    fetch("/session-config/"),
+    fetch("/status/", { headers: apiHeaders() }),
+  ]);
+
+  if (cfgResult.status === "fulfilled" && cfgResult.value.ok) {
+    try { sessionCfg = await cfgResult.value.json(); } catch (_) {}
+  }
+
   let documentLoaded = false;
   let sessionActive  = false;
-  try {
-    const res  = await fetch("/status/", { headers: apiHeaders() });
-    const data = await res.json();
-    documentLoaded  = data.document_loaded;
-    currentFilename = data.filename;
-    sessionActive   = data.session_active;
-  } catch (_) {
-    // Network error — treat as no document
+  if (statusResult.status === "fulfilled") {
+    try {
+      const data = await statusResult.value.json();
+      documentLoaded  = data.document_loaded;
+      currentFilename = data.filename;
+      sessionActive   = data.session_active;
+    } catch (_) {}
   }
 
   if (documentLoaded) {
     if (sessionActive) {
       showChatMode(currentFilename);
-      loadHistory();           // re-render previous messages from DB
+      loadHistory();
+    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email && !sessionCfg.collect_mobile) {
+      // Anonymous mode — create session immediately, no modal needed
+      await createDirectSession({});
     } else {
       showUserModal();
     }
@@ -98,13 +114,11 @@ let currentFilename = null;
 })();
 
 // ─── Mode helpers ─────────────────────────────────────────────────────────────
-function showChatMode(filename) {
+function showChatMode(_filename) {
   userModal.classList.add("hidden");
   noDocSection.classList.add("hidden");
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
-  docIndicatorTxt.textContent = filename;
-  docIndicator.classList.add("loaded");
   questionInput.focus();
 }
 
@@ -113,8 +127,6 @@ function showNoDocMode() {
   chatSection.classList.add("hidden");
   noDocSection.classList.remove("hidden");
   resetBtn.classList.add("hidden");
-  docIndicatorTxt.textContent = "No document loaded";
-  docIndicator.classList.remove("loaded");
 }
 
 // ─── Load history on session resume ──────────────────────────────────────────
@@ -131,6 +143,9 @@ async function loadHistory() {
         const bubble = appendAssistantBubble();
         bubble.classList.remove("streaming");
         setAssistantContent(bubble, msg.content);
+        if (msg.id) {
+          _attachFeedbackButtons(bubble, msg.id, msg.liked);
+        }
       }
     }
     scrollToBottom();
@@ -142,19 +157,25 @@ function showUserModal() {
   chatSection.classList.add("hidden");
   resetBtn.classList.add("hidden");
   noDocSection.classList.add("hidden");
-  if (currentFilename) {
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
-  }
+  // Show/hide fields based on admin config
+  const nameField   = document.getElementById("um-field-name");
+  const emailField  = document.getElementById("um-field-email");
+  const mobileField = document.getElementById("um-field-mobile");
+  if (nameField)   nameField.style.display   = sessionCfg.collect_name   ? "" : "none";
+  if (emailField)  emailField.style.display  = sessionCfg.collect_email  ? "" : "none";
+  if (mobileField) mobileField.style.display = sessionCfg.collect_mobile ? "" : "none";
+
   // Always reset to step 1
   showOtpStep(1);
-  nameInput.value  = "";
-  emailInput.value = "";
+  nameInput.value   = "";
+  emailInput.value  = "";
+  mobileInput.value = "";
+  if (mobileError) mobileError.classList.add("hidden");
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = false;
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
   userModal.classList.remove("hidden");
-  nameInput.focus();
+  (sessionCfg.collect_name ? nameInput : sessionCfg.collect_email ? emailInput : mobileInput).focus();
 }
 
 function showOtpStep(step) {
@@ -201,32 +222,111 @@ function stopOtpCountdown() {
   }
 }
 
-// ─── Step 1: submit name + email → request OTP ────────────────────────────────
+// ─── Mobile validation ────────────────────────────────────────────────────────
+function validateMobile() {
+  const digits  = mobileInput.value.replace(/[\s\-]/g, "");
+  const code    = countrySelect.value;
+  const opt     = countrySelect.options[countrySelect.selectedIndex];
+  const reqLen  = parseInt(opt.dataset.digits || "10", 10);
+  const pattern = opt.dataset.pattern || "";
+
+  if (!digits) {
+    mobileError.textContent = "કૃપા કરી તમારો મોબાઈલ નંબર જણાવો ";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (!/^\d+$/.test(digits)) {
+    mobileError.textContent = "Mobile number must contain only digits.";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (digits.length !== reqLen) {
+    mobileError.textContent = `Mobile number must be exactly ${reqLen} digits for ${code}.`;
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  if (pattern && !new RegExp(pattern).test(digits)) {
+    mobileError.textContent = "Please enter a valid mobile number.";
+    mobileError.classList.remove("hidden");
+    return null;
+  }
+  mobileError.classList.add("hidden");
+  return code + digits;
+}
+
+// ─── Direct session creation (no OTP) ─────────────────────────────────────────
+async function createDirectSession(payload) {
+  try {
+    const res  = await fetch("/start-session/", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body:    JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.status === "ok") {
+      setToken(data.token);
+      showChatMode(currentFilename);
+      return true;
+    } else {
+      return { error: data.message || "Failed to start session. Please try again." };
+    }
+  } catch (_) {
+    return { error: "Network error. Please try again." };
+  }
+}
+
+// ─── Step 1: submit name + email (+ mobile) → OTP or direct session ───────────
 userForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name  = nameInput.value.trim();
   const email = emailInput.value.trim();
 
-  if (!name) {
-    modalError.textContent = "Please enter your name.";
+  if (sessionCfg.collect_name && !name) {
+    modalError.textContent = "કૃપા કરી તમારું નામ જણાવો";
     modalError.classList.remove("hidden");
     return;
   }
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (sessionCfg.collect_email && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     modalError.textContent = "Please enter a valid email address.";
     modalError.classList.remove("hidden");
     return;
   }
 
+  let mobile = "";
+  if (sessionCfg.collect_mobile) {
+    const validated = validateMobile();
+    if (validated === null) return;
+    mobile = validated;
+  }
+
   modalError.classList.add("hidden");
   modalSubmitBtn.disabled = true;
+
+  // ── Direct session (no OTP) ──────────────────────────────────────────────────
+  if (!sessionCfg.collect_email || !sessionCfg.verify_email) {
+    modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
+    const payload = {};
+    if (sessionCfg.collect_name)   payload.name   = name;
+    if (sessionCfg.collect_email)  payload.email  = email;
+    if (sessionCfg.collect_mobile) payload.mobile = mobile;
+    const result = await createDirectSession(payload);
+    if (result !== true) {
+      modalError.textContent = result.error;
+      modalError.classList.remove("hidden");
+      modalSubmitBtn.disabled = false;
+      modalSubmitBtn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i>Start Chat';
+    }
+    return;
+  }
+
+  // ── OTP flow ─────────────────────────────────────────────────────────────────
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending code…';
 
   try {
     const res  = await fetch("/request-otp/", {
       method:  "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      body:    JSON.stringify({ name, email }),
+      body:    JSON.stringify({ name, email, mobile }),
     });
     const data = await res.json();
 
@@ -366,8 +466,6 @@ modalCloseBtn.addEventListener("click", () => {
   if (currentFilename) {
     chatSection.classList.remove("hidden");
     resetBtn.classList.remove("hidden");
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
   }
 });
 
@@ -383,11 +481,19 @@ resetBtn.addEventListener("click", () => {
   chatWindow.innerHTML = `
     <div class="welcome-msg">
       <i class="fa-regular fa-comment-dots welcome-icon"></i>
-      <p>Document loaded. Ask me anything about it.</p>
+      <p>Ask me anything about the document</p>
+      <span class="welcome-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</span>
     </div>`;
 
   showUserModal();
 });
+
+// ─── Auto-expand textarea ─────────────────────────────────────────────────────
+function autoResize() {
+  questionInput.style.height = "auto";
+  questionInput.style.height = questionInput.scrollHeight + "px";
+}
+questionInput.addEventListener("input", autoResize);
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 sendBtn.addEventListener("click", sendMessage);
@@ -401,6 +507,7 @@ function sendMessage() {
 
   appendUserBubble(question);
   questionInput.value = "";
+  questionInput.style.height = "auto";
   setInputEnabled(false);
 
   const asmBubble = appendAssistantBubble();
@@ -446,9 +553,15 @@ async function streamChat(question, bubble) {
         if (!line.startsWith("data: ")) continue;
         const token = line.slice(6);
 
-        if (token === "[DONE]") {
+        if (token === "[DONE]" || token.startsWith("[DONE:")) {
           setAssistantContent(bubble, rawText);
           bubble.classList.remove("streaming");
+          // Reveal feedback buttons if we have a message PK
+          const match = token.match(/^\[DONE:(\d+)\]$/);
+          if (match) {
+            const msgId = parseInt(match[1], 10);
+            _attachFeedbackButtons(bubble, msgId, null);
+          }
           setInputEnabled(true);
           scrollToBottom();
           return;
@@ -475,12 +588,27 @@ async function streamChat(question, bubble) {
 }
 
 // ─── Bubble builders ──────────────────────────────────────────────────────────
+function makeTimestamp() {
+  const now = new Date();
+  let h = now.getHours(), m = now.getMinutes();
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  const span = document.createElement("span");
+  span.className = "msg-time";
+  span.textContent = h + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
+  return span;
+}
+
 function appendUserBubble(text) {
   removeWelcome();
+  const wrap = document.createElement("div");
+  wrap.className = "bubble-wrapper user-wrapper";
   const div = document.createElement("div");
   div.className = "bubble user";
   div.textContent = text;
-  chatWindow.appendChild(div);
+  wrap.appendChild(div);
+  wrap.appendChild(makeTimestamp());
+  chatWindow.appendChild(wrap);
   scrollToBottom();
 }
 
@@ -507,12 +635,75 @@ function appendAssistantBubble() {
     });
   });
 
+  const likeBtn = document.createElement("button");
+  likeBtn.className = "feedback-btn like-btn";
+  likeBtn.title = "Good answer";
+  likeBtn.hidden = true;
+  likeBtn.innerHTML = '<i class="fa-regular fa-thumbs-up"></i>';
+
+  const dislikeBtn = document.createElement("button");
+  dislikeBtn.className = "feedback-btn dislike-btn";
+  dislikeBtn.title = "Bad answer";
+  dislikeBtn.hidden = true;
+  dislikeBtn.innerHTML = '<i class="fa-regular fa-thumbs-down"></i>';
+
   actions.appendChild(copyBtn);
+  actions.appendChild(likeBtn);
+  actions.appendChild(dislikeBtn);
   wrapper.appendChild(div);
   wrapper.appendChild(actions);
+  wrapper.appendChild(makeTimestamp());
   chatWindow.appendChild(wrapper);
   scrollToBottom();
   return div;
+}
+
+function _attachFeedbackButtons(bubble, msgId, liked = null) {
+  const actions = bubble.parentElement && bubble.parentElement.querySelector(".bubble-actions");
+  if (!actions) return;
+  const likeBtn = actions.querySelector(".like-btn");
+  const dislikeBtn = actions.querySelector(".dislike-btn");
+  if (!likeBtn || !dislikeBtn) return;
+
+  likeBtn.hidden = false;
+  dislikeBtn.hidden = false;
+
+  // Restore previous feedback state
+  if (liked === true) {
+    likeBtn.classList.add("active");
+    likeBtn.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else if (liked === false) {
+    dislikeBtn.classList.add("active");
+    dislikeBtn.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else {
+    likeBtn.addEventListener("click", () => _submitFeedback(msgId, true, likeBtn, dislikeBtn));
+    dislikeBtn.addEventListener("click", () => _submitFeedback(msgId, false, likeBtn, dislikeBtn));
+  }
+}
+
+async function _submitFeedback(msgId, liked, likeBtn, dislikeBtn) {
+  // Optimistic UI update
+  likeBtn.classList.toggle("active", liked);
+  dislikeBtn.classList.toggle("active", !liked);
+  likeBtn.disabled = true;
+  dislikeBtn.disabled = true;
+
+  try {
+    await fetch("/feedback/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Chat-Token": getToken(),
+      },
+      body: JSON.stringify({ message_id: msgId, liked }),
+    });
+  } catch (_) {
+    // Fire-and-forget; UI already updated
+  }
 }
 
 function setAssistantContent(bubble, rawMarkdown) {

@@ -23,7 +23,7 @@ import numpy as np
 
 logger = logging.getLogger("chat.cache")
 
-CACHE_SIMILARITY_THRESHOLD: float = 0.90
+CACHE_SIMILARITY_THRESHOLD: float = 0.95
 _MAX_ENTRIES_PER_SESSION: int = 50
 
 # process-level store — lives for the lifetime of the gunicorn worker

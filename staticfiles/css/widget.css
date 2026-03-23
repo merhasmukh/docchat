@@ -2,8 +2,8 @@
 /* Uses --wg-accent CSS custom property set dynamically by widget_chat.js      */
 
 :root {
-  --wg-accent: #432323;
-  --wg-accent-light: #6b3a3a;
+  --wg-accent: #C45500;
+  --wg-accent-light: #D46810;
   --wg-bg: #ffffff;
   --wg-surface: #f8f6f4;
   --wg-border: #e8e3de;
@@ -28,6 +28,7 @@ body {
   background: var(--wg-bg);
   margin: 0;
   height: 100vh;
+  height: 100dvh; /* dynamic viewport height — shrinks when virtual keyboard opens */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -39,6 +40,10 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
+  /* Push content below notch / status bar on devices with safe areas */
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  padding-right: calc(16px + env(safe-area-inset-right, 0px));
   background: var(--wg-accent);
   color: #fff;
   flex-shrink: 0;
@@ -51,21 +56,27 @@ body {
   gap: 10px;
 }
 
+.wg-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .wg-avatar {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.15);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.wg-avatar svg {
-  width: 18px;
-  height: 18px;
-  fill: #fff;
+.wg-avatar-logo {
+  height: 28px;
+  width: auto;
+  object-fit: contain;
 }
 
 .wg-header-info {
@@ -80,12 +91,12 @@ body {
   line-height: 1.2;
 }
 
-.wg-doc-badge {
+.wg-online-badge {
   display: flex;
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .wg-status-dot {
@@ -96,11 +107,27 @@ body {
   flex-shrink: 0;
 }
 
-#wg-doc-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 180px;
+/* New chat icon button in header */
+.wg-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.15);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+  padding: 0;
+}
+
+.wg-icon-btn:hover { background: rgba(255,255,255,0.25); }
+
+.wg-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
 }
 
 /* ── Screens (auth, chat, nodoc) ──────────────────────────────────────────── */
@@ -110,6 +137,8 @@ body {
   overflow-x: hidden;
   padding: 20px 16px;
   scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch; /* smooth momentum scrolling on iOS */
+  overscroll-behavior: contain;      /* prevent pull-to-refresh on Android */
 }
 
 /* scrollbar */
@@ -189,6 +218,44 @@ body {
 .wg-input:focus {
   border-color: var(--wg-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 15%, transparent);
+}
+
+/* Phone input — unified pill */
+.wg-phone-wrap {
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--wg-border);
+  border-radius: var(--wg-radius-sm);
+  background: var(--wg-bg);
+  overflow: hidden;
+  transition: border-color .15s, box-shadow .15s;
+}
+.wg-phone-wrap:focus-within {
+  border-color: var(--wg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 15%, transparent);
+}
+.wg-country-select {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 8px;
+  border: none;
+  border-right: 1.5px solid var(--wg-border);
+  border-radius: 0;
+  background: var(--wg-surface);
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  color: var(--wg-text);
+}
+.wg-country-select:focus { outline: none; }
+.wg-mobile-input {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  flex: 1;
+  background: transparent !important;
 }
 
 /* OTP code input */
@@ -352,29 +419,54 @@ body {
 }
 .wg-bot .wg-bubble a { color: var(--wg-accent); }
 
-/* Copy button on bot bubbles */
+/* Timestamp */
+.wg-ts {
+  font-size: 10px;
+  color: var(--wg-text-muted);
+  margin-top: 3px;
+  opacity: 0.7;
+  display: block;
+}
+.wg-user .wg-ts { text-align: right; }
+.wg-bot  .wg-ts { text-align: left; }
+
+/* Message actions row (copy / like / dislike) — always visible */
 .wg-msg-actions {
   display: flex;
   gap: 4px;
   margin-top: 4px;
-  opacity: 0;
-  transition: opacity .15s;
 }
 
-.wg-msg:hover .wg-msg-actions { opacity: 1; }
-
-.wg-copy-btn {
+/* Shared icon button base */
+.wg-copy-btn,
+.wg-fb-btn {
+  width: 26px;
+  height: 26px;
+  padding: 4px;
   background: none;
   border: 1px solid var(--wg-border);
   border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
   cursor: pointer;
   color: var(--wg-text-muted);
   transition: border-color .15s, color .15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.wg-copy-btn:hover { border-color: var(--wg-accent); color: var(--wg-accent); }
+.wg-copy-btn i,
+.wg-fb-btn i {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.wg-copy-btn:hover,
+.wg-fb-btn:hover { border-color: var(--wg-accent); color: var(--wg-accent); }
+
+.wg-like-btn.active    { color: #16a34a; border-color: #16a34a; }
+.wg-dislike-btn.active { color: #dc2626; border-color: #dc2626; }
+.wg-fb-btn:disabled    { cursor: default; opacity: .55; }
 
 /* Streaming cursor */
 .wg-cursor::after {
@@ -391,42 +483,58 @@ body {
 
 /* ── Input bar ────────────────────────────────────────────────────────────── */
 #wg-input-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 14px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(14px + env(safe-area-inset-left, 0px));
+  padding-right: calc(14px + env(safe-area-inset-right, 0px));
   border-top: 1px solid var(--wg-border);
   background: var(--wg-bg);
   flex-shrink: 0;
 }
 
+/* Pill container wrapping textarea + send button */
+.wg-input-pill {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  background: var(--wg-bg);
+  border: 1.5px solid var(--wg-border);
+  border-radius: 24px;
+  padding: 8px 8px 8px 16px;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.wg-input-pill:focus-within {
+  border-color: var(--wg-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 10%, transparent);
+}
+
 #wg-input {
   flex: 1;
   resize: none;
-  border: 1.5px solid var(--wg-border);
-  border-radius: var(--wg-radius-sm);
-  padding: 9px 12px;
+  border: none;
+  border-radius: 0;
+  padding: 2px 0;
   font-size: 14px;
   font-family: inherit;
-  line-height: 1.4;
+  line-height: 1.5;
   max-height: 120px;
   overflow-y: auto;
   outline: none;
-  transition: border-color .15s;
-  background: var(--wg-bg);
+  background: transparent;
   color: var(--wg-text);
 }
 
 #wg-input:focus {
-  border-color: var(--wg-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wg-accent) 12%, transparent);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 #wg-send-btn {
-  width: 38px;
-  height: 38px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: 10px;
   background: var(--wg-accent);
   border: none;
   cursor: pointer;
@@ -441,8 +549,8 @@ body {
 #wg-send-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 #wg-send-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   fill: #fff;
 }
 
@@ -459,4 +567,60 @@ body {
 
 @keyframes wg-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── Mobile / touch adjustments ──────────────────────────────────────────── */
+
+
+@media (max-width: 600px) {
+  /* Prevent iOS Safari from zooming in when an input is focused.
+     iOS zooms if font-size < 16px. */
+  .wg-input,
+  #wg-input {
+    font-size: 16px;
+  }
+
+  /* OTP code input — slightly smaller letter-spacing on narrow screens */
+  .wg-otp-input {
+    font-size: 24px;
+    letter-spacing: .3em;
+    padding: 10px 12px;
+  }
+
+  /* Ensure minimum 44 × 44 px tap targets (Apple HIG / WCAG 2.5.5) */
+  .wg-btn {
+    min-height: 44px;
+    padding: 10px 20px;
+  }
+
+  #wg-send-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .wg-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 0;
+  }
+
+  .wg-copy-btn,
+  .wg-fb-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  /* Give auth icon a bit more breathing room */
+  .wg-auth-icon {
+    width: 52px;
+    height: 52px;
+  }
+
+  /* Larger tap target for icon button */
+  .wg-icon-btn {
+    width: 40px;
+    height: 40px;
+  }
 }

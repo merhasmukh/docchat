@@ -58,22 +58,58 @@ def _ocr_page_tesseract(image_path: str) -> str:
     return text
 
 
+_GEMINI_VISION_OCR_PROMPT = """\
+You are extracting content from a document page image to build a knowledge base for a question-answering system.
+Your output will be used directly as LLM context — it must be clean, structured, and information-dense.
+
+## LANGUAGE RULES
+- Preserve ALL text in its original script: Gujarati (Unicode), English, or mixed Gujarati+English.
+- Do NOT translate, transliterate, or paraphrase any text.
+- If a word is in Gujarati script, output it in Gujarati script. Same for English.
+
+## STRUCTURE RULES
+- Use ## for main section headings, ### for sub-headings.
+- Use - for bullet lists and numbered lists where they appear in the document.
+- Use **label** (bold) for field names or important terms.
+
+## TABLE RULES  ← most important
+Tables in PDFs often contain course details, fees, seat counts, eligibility criteria etc.
+Do NOT output raw table borders or grid characters.
+Convert every table into labeled plain-text rows like this:
+
+  If the table is a course list with columns (Code, Course Name, Seats, Eligibility):
+    CB4. **M.C.A.** | બેઠક: 60 | લાયકાત: કોઈ પણ વિષયમાં સ્નાતક 50% સાથે, ધોરણ 12 અથવા સ્નાતકમાં ગણિત જરૂરી
+    CB1. **B.C.A.** | બેઠક: 60 | લાયકાત: ધોરણ 12 (કોઈ પણ પ્રવાહ) 40% સાથે
+
+  General rule: use each column header as a label for that row's value.
+  Each table row → one line of labeled text.
+  For spanning cells, write the value once on its first row only.
+
+## IGNORE COMPLETELY
+- Page numbers (e.g. "Page 1", "1 / 12", "- 3 -")
+- Repeated page headers / footers (university name banner, document title at top/bottom)
+- Watermarks, logos, decorative lines, borders, stamps
+- Any purely decorative or structural element that carries no information
+
+## OUTPUT FORMAT
+Return only the structured content — no commentary, no "Here is the extracted text:" preamble.
+Start directly with the content.
+"""
+
+
 def _ocr_page_gemini_vision(image_path: str, client, model_name: str) -> str:
     t0 = time.perf_counter()
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     contents = [
         genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-        genai_types.Part(
-            text=(
-                "Extract all text from this image exactly as it appears. "
-                "Preserve the original language (Hindi, Gujarati, English, or any mix). "
-                "Output Devanagari script for Hindi, Gujarati script for Gujarati. "
-                "Return only the extracted text, no commentary."
-            )
-        ),
+        genai_types.Part(text=_GEMINI_VISION_OCR_PROMPT),
     ]
-    response = client.models.generate_content(model=model_name, contents=contents)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=genai_types.GenerateContentConfig(max_output_tokens=8192),
+    )
     text = response.text or ""
     logger.debug("Gemini Vision OCR (model=%s): %.2fs, %d chars", model_name, time.perf_counter() - t0, len(text))
     return text
@@ -267,7 +303,7 @@ def _embed_gemini(texts: list[str]) -> list[list[float]]:
     embeddings = []
     for text in texts:
         response = client.models.embed_content(
-            model="text-multilingual-embedding-002",
+            model="gemini-embedding-001",
             contents=text,
         )
         embeddings.append(list(response.embeddings[0].values))
@@ -287,8 +323,8 @@ _qdrant_client = None
 
 _EMBEDDING_DIMS = {
     "multilingual_local": 384,
-    "gemini_embedding":   768,
-    "bm25":               1,    # dummy — text stored in payload, BM25 in-memory
+    "gemini_embedding":   3072,  # gemini-embedding-001 output dimension
+    "bm25":               1,     # dummy — text stored in payload, BM25 in-memory
 }
 
 
@@ -386,29 +422,29 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
     return result
 
 
-def split_text_into_pages(text: str, chunk_size: int = 1_000) -> dict:
+def split_text_into_pages(
+    text: str,
+    chunk_size: int = 1_000,
+    chunk_overlap: int = 100,
+) -> dict:
     """
     Split plain pasted text into synthetic 'pages' for RAG embedding.
 
-    Splits on paragraph boundaries (double newlines), merging paragraphs until
-    a chunk reaches *chunk_size* characters.  Each resulting chunk becomes one
-    page in the pages_data dict that the rest of the pipeline expects.
+    Uses LangChain's RecursiveCharacterTextSplitter with a hierarchy of
+    separators (paragraph → line → Gujarati danda → sentence → word → char)
+    so it always produces correctly-sized chunks regardless of whether the
+    input has double newlines or not.
+
+    chunk_size and chunk_overlap are in characters (Unicode-safe for Gujarati).
     """
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    pages: list[str] = []
-    current: list[str] = []
-    size = 0
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    for para in paragraphs:
-        if size + len(para) > chunk_size and current:
-            pages.append("\n\n".join(current))
-            current, size = [para], len(para)
-        else:
-            current.append(para)
-            size += len(para)
-
-    if current:
-        pages.append("\n\n".join(current))
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", "।", ".", " ", ""],
+    )
+    pages = splitter.split_text(text)
 
     # Guarantee at least one page even for very short text
     if not pages:
@@ -618,9 +654,52 @@ def delete_liked_collection(base_collection: str) -> None:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+_ECHOED_HINT_RE = _re.compile(
+    r"^\s*"
+    r"(?:"
+    # parenthetical hint we append: "(Please reply in English.)" etc.
+    r"\([^)]{0,120}\)\s*"
+    r"|"
+    # [INTERNAL: ...] or [INST: ...] style tags the model may echo
+    r"\[(?:INTERNAL|INST)[^\]]{0,200}\]\s*"
+    r"|"
+    # [INST]...[/INST] reasoning block
+    r"\[INST\][\s\S]{0,600}?\[/INST\]\s*"
+    r")",
+    _re.DOTALL,
+)
+
+
+def _scrub_echoed_hint_stream(gen):
+    """
+    Buffer the start of a streaming response and strip any echoed language-hint
+    prefix before yielding tokens to the caller.
+    """
+    BUFFER_CAP = 400          # [INST]...[/INST] blocks can be ~300 chars
+    buf = ""
+    prefix_stripped = False
+
+    for token in gen:
+        if prefix_stripped:
+            yield token
+            continue
+        buf += token
+        # Flush once we have enough context OR we see a clear end of any tag
+        if len(buf) >= BUFFER_CAP or (buf.lstrip() and not buf.lstrip().startswith(("[", "("))):
+            buf = _ECHOED_HINT_RE.sub("", buf).lstrip()
+            prefix_stripped = True
+            if buf:
+                yield buf
+
+    if not prefix_stripped:
+        buf = _ECHOED_HINT_RE.sub("", buf).lstrip()
+        if buf:
+            yield buf
+
+
 def ask_streaming(question: str, history: list, markdown_text: str,
-                  usage_out: dict or None = None,
-                  gemini_cache_name: str or None = None):
+                  usage_out: dict | None = None,
+                  gemini_cache_name: str | None = None):
     """
     Generator that yields string tokens from the active LLM's streaming response.
     Used by the /chat SSE route.
@@ -642,11 +721,11 @@ def ask_streaming(question: str, history: list, markdown_text: str,
             # Only use cache for the primary model — cache is model-specific
             cache = gemini_cache_name if attempt == 0 else None
             try:
-                yield from _ask_streaming_gemini(
+                yield from _scrub_echoed_hint_stream(_ask_streaming_gemini(
                     question, history, markdown_text, model,
                     usage_out=usage_out, cache_name=cache,
                     fallback_contact=fallback_contact,
-                )
+                ))
                 break  # success — stop trying fallbacks
             except GeminiUnavailableError:
                 if attempt < len(models_to_try) - 1:
@@ -658,15 +737,15 @@ def ask_streaming(question: str, history: list, markdown_text: str,
                     logger.error("All Gemini fallback models exhausted — raising 503")
                     raise
     elif config.provider == "sarvam":
-        yield from _ask_streaming_sarvam(
+        yield from _scrub_echoed_hint_stream(_ask_streaming_sarvam(
             question, history, markdown_text, config.sarvam_model,
             usage_out=usage_out, fallback_contact=fallback_contact,
-        )
+        ))
     else:  # ollama
-        yield from _ask_streaming_ollama(
+        yield from _scrub_echoed_hint_stream(_ask_streaming_ollama(
             question, history, markdown_text, config.ollama_model,
             usage_out=usage_out, fallback_contact=fallback_contact,
-        )
+        ))
 
 
 def ask(question: str, history: list, markdown_text: str) -> tuple[str, float]:
