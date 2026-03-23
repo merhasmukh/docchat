@@ -13,4 +13,5 @@ urlpatterns = [
     path("resend-otp/",   views.resend_otp_view,   name="resend_otp"),
     path("chat/",         views.chat_view,         name="chat"),
     path("reset/",        views.reset_view,        name="reset"),
+    path("feedback/",     views.feedback_view,     name="feedback"),
 ]

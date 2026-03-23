@@ -6,9 +6,9 @@
        soft keyboard opens on Android Chrome — only the visual viewport shrinks,
        the layout viewport stays the same so the input bar never jumps. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
-  <meta name="theme-color" content="#EFE9E3">
+  <meta name="theme-color" content="#C45500">
   <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>Gujarat Vidyapith AI</title>
+  <title>GV प्रवेश मित्र</title>
 
   <!-- Bootstrap CSS -->
   <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
@@ -17,7 +17,7 @@
   <!-- Google Fonts – Inter -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="/static/css/style.css?v=5">
+  <link rel="stylesheet" href="/static/css/style.css?v=7">
 </head>
 <body>
 
@@ -25,20 +25,17 @@
   <nav class="app-navbar" id="app-navbar">
     <div class="navbar-inner">
       <div class="navbar-brand-group">
-        <i class="fa-solid fa-file-lines brand-icon"></i>
+        <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
+             class="navbar-logo" alt="Gujarat Vidyapith">
         <div class="brand-text">
-          <span class="brand-name">Gujarat Vidyapith AI Assistant</span>
-          <span class="brand-sub">Ask to AI</span>
+          <span class="brand-name">GV प्रवेश मित्र</span>
+          <span class="brand-sub">Always here to help</span>
         </div>
       </div>
 
       <div class="navbar-right">
-        <span id="doc-indicator" class="doc-indicator">
-          <i class="fa-regular fa-circle-dot status-dot"></i>
-          <span id="doc-indicator-text">Loading…</span>
-        </span>
         <button id="reset-btn" class="btn-change hidden" title="Clear conversation history">
-          <i class="fa-solid fa-arrows-rotate"></i>New Chat
+          <i class="fa-solid fa-arrows-rotate"></i><span>New Chat</span>
         </button>
       </div>
     </div>
@@ -63,21 +60,25 @@
 
       <div id="chat-window">
         <div class="welcome-msg">
-          <i class="fa-regular fa-comment-dots welcome-icon"></i>
-          <p>Ask me anything about the document</p>
-          <span class="welcome-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</span>
-        </div>
+          <div class="welcome-avatar">
+            <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
+                 class="welcome-logo" alt="Gujarat Vidyapith">
+          </div>
+          <p class="welcome-greeting">ગૂજરાત વિદ્યાપીઠ આપનું સ્વાગત કરે છે.</p><p class="welcome-tagline">હું તમારો AI સહાયક છું. મને અભ્યાસક્રમો,<br class="d-none d-sm-inline"> પ્રવેશ, કેમ્પસ સુવિધાઓ, અથવા ગૂજરાત વિદ્યાપીઠ વિશે કંઈપણ પૂછો.</p></div>
       </div>
 
-      <div id="input-area">
-        <textarea
-          id="question-input"
-          placeholder="Type your question…"
-          rows="2"
-        ></textarea>
-        <button id="send-btn" class="btn-send" title="Send message">
-          <i class="fa-solid fa-paper-plane"></i>
-        </button>
+      <div class="input-wrap">
+        <div id="input-area">
+          <textarea
+            id="question-input"
+            placeholder="Type your message…"
+            rows="1"
+          ></textarea>
+          <button id="send-btn" class="btn-send" title="Send message">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+        <p class="input-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</p>
       </div>
 
     </section>
@@ -91,8 +92,9 @@
       <!-- Branded header strip -->
       <div class="um-accent-bar">
         <div class="um-accent-brand">
-          <i class="fa-solid fa-file-lines"></i>
-          <span>Gujarat Vidyapith AI</span>
+          <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
+               class="modal-logo" alt="Gujarat Vidyapith">
+          <span>Gujarat Vidyapith</span>
         </div>
         <button id="modal-close-btn" class="um-close-btn" type="button" title="Close">
           <i class="fa-solid fa-xmark"></i>
@@ -221,6 +223,6 @@
     })();
   </script>
 
-  <script src="/static/js/main.js?v=9"></script>
+  <script src="/static/js/main.js?v=11"></script>
 </body>
 </html>

@@ -23,7 +23,7 @@ from .providers.gemini import create_gemini_cache, delete_gemini_cache, GeminiUn
 
 # Ordered fallback models tried when the primary Gemini model returns 503 UNAVAILABLE.
 # The primary model (from LLMConfig) is always tried first; these are fallbacks only.
-_GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+_GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
 
 # ── OCR backends ───────────────────────────────────────────────────────────────
@@ -58,22 +58,58 @@ def _ocr_page_tesseract(image_path: str) -> str:
     return text
 
 
+_GEMINI_VISION_OCR_PROMPT = """\
+You are extracting content from a document page image to build a knowledge base for a question-answering system.
+Your output will be used directly as LLM context — it must be clean, structured, and information-dense.
+
+## LANGUAGE RULES
+- Preserve ALL text in its original script: Gujarati (Unicode), English, or mixed Gujarati+English.
+- Do NOT translate, transliterate, or paraphrase any text.
+- If a word is in Gujarati script, output it in Gujarati script. Same for English.
+
+## STRUCTURE RULES
+- Use ## for main section headings, ### for sub-headings.
+- Use - for bullet lists and numbered lists where they appear in the document.
+- Use **label** (bold) for field names or important terms.
+
+## TABLE RULES  ← most important
+Tables in PDFs often contain course details, fees, seat counts, eligibility criteria etc.
+Do NOT output raw table borders or grid characters.
+Convert every table into labeled plain-text rows like this:
+
+  If the table is a course list with columns (Code, Course Name, Seats, Eligibility):
+    CB4. **M.C.A.** | બેઠક: 60 | લાયકાત: કોઈ પણ વિષયમાં સ્નાતક 50% સાથે, ધોરણ 12 અથવા સ્નાતકમાં ગણિત જરૂરી
+    CB1. **B.C.A.** | બેઠક: 60 | લાયકાત: ધોરણ 12 (કોઈ પણ પ્રવાહ) 40% સાથે
+
+  General rule: use each column header as a label for that row's value.
+  Each table row → one line of labeled text.
+  For spanning cells, write the value once on its first row only.
+
+## IGNORE COMPLETELY
+- Page numbers (e.g. "Page 1", "1 / 12", "- 3 -")
+- Repeated page headers / footers (university name banner, document title at top/bottom)
+- Watermarks, logos, decorative lines, borders, stamps
+- Any purely decorative or structural element that carries no information
+
+## OUTPUT FORMAT
+Return only the structured content — no commentary, no "Here is the extracted text:" preamble.
+Start directly with the content.
+"""
+
+
 def _ocr_page_gemini_vision(image_path: str, client, model_name: str) -> str:
     t0 = time.perf_counter()
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     contents = [
         genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-        genai_types.Part(
-            text=(
-                "Extract all text from this image exactly as it appears. "
-                "Preserve the original language (Hindi, Gujarati, English, or any mix). "
-                "Output Devanagari script for Hindi, Gujarati script for Gujarati. "
-                "Return only the extracted text, no commentary."
-            )
-        ),
+        genai_types.Part(text=_GEMINI_VISION_OCR_PROMPT),
     ]
-    response = client.models.generate_content(model=model_name, contents=contents)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=genai_types.GenerateContentConfig(max_output_tokens=8192),
+    )
     text = response.text or ""
     logger.debug("Gemini Vision OCR (model=%s): %.2fs, %d chars", model_name, time.perf_counter() - t0, len(text))
     return text
@@ -232,6 +268,18 @@ def convert_to_markdown(input_path: str) -> tuple[str, dict]:
 
 # ── RAG helpers (BM25 + multilingual embeddings) ──────────────────────────────
 
+import re as _re
+
+# Collapse dotted abbreviations so "M.C.A." and "MCA" tokenise identically.
+# Matches 2+ single letters separated by dots, with an optional trailing dot.
+# Examples: M.C.A. → MCA   B.C.A → BCA   M.A. → MA
+_ABBR_RE = _re.compile(r'\b([A-Za-z]\.){2,}[A-Za-z]?\b')
+
+
+def _normalize_abbr(text: str) -> str:
+    """Strip dots from dotted abbreviations to unify 'M.C.A.' with 'MCA'."""
+    return _ABBR_RE.sub(lambda m: m.group(0).replace(".", ""), text)
+
 _st_model = None
 
 def _get_st_model():
@@ -255,7 +303,7 @@ def _embed_gemini(texts: list[str]) -> list[list[float]]:
     embeddings = []
     for text in texts:
         response = client.models.embed_content(
-            model="text-multilingual-embedding-002",
+            model="gemini-embedding-001",
             contents=text,
         )
         embeddings.append(list(response.embeddings[0].values))
@@ -275,8 +323,8 @@ _qdrant_client = None
 
 _EMBEDDING_DIMS = {
     "multilingual_local": 384,
-    "gemini_embedding":   768,
-    "bm25":               1,    # dummy — text stored in payload, BM25 in-memory
+    "gemini_embedding":   3072,  # gemini-embedding-001 output dimension
+    "bm25":               1,     # dummy — text stored in payload, BM25 in-memory
 }
 
 
@@ -340,8 +388,8 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
             collection_name=collection_name, with_payload=True, limit=10_000
         )
         chunks    = [{"page": p.payload["page"], "text": p.payload["text"]} for p in all_points]
-        tokenized = [c["text"].lower().split() for c in chunks]
-        scores    = BM25Okapi(tokenized).get_scores(question.lower().split())
+        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
+        scores    = BM25Okapi(tokenized).get_scores(_normalize_abbr(question).lower().split())
         ranked    = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
         selected  = sorted(ranked)
         result    = "\n\n---\n\n".join(
@@ -349,10 +397,11 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
         )
         method_used = "bm25"
     else:
+        norm_q = _normalize_abbr(question)
         q_emb = (
-            _embed_local([question])[0]
+            _embed_local([norm_q])[0]
             if embedding_method == "multilingual_local"
-            else _embed_gemini([question])[0]
+            else _embed_gemini([norm_q])[0]
         )
         hits = client.query_points(
             collection_name=collection_name,
@@ -373,29 +422,29 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
     return result
 
 
-def split_text_into_pages(text: str, chunk_size: int = 1_000) -> dict:
+def split_text_into_pages(
+    text: str,
+    chunk_size: int = 1_000,
+    chunk_overlap: int = 100,
+) -> dict:
     """
     Split plain pasted text into synthetic 'pages' for RAG embedding.
 
-    Splits on paragraph boundaries (double newlines), merging paragraphs until
-    a chunk reaches *chunk_size* characters.  Each resulting chunk becomes one
-    page in the pages_data dict that the rest of the pipeline expects.
+    Uses LangChain's RecursiveCharacterTextSplitter with a hierarchy of
+    separators (paragraph → line → Gujarati danda → sentence → word → char)
+    so it always produces correctly-sized chunks regardless of whether the
+    input has double newlines or not.
+
+    chunk_size and chunk_overlap are in characters (Unicode-safe for Gujarati).
     """
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    pages: list[str] = []
-    current: list[str] = []
-    size = 0
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    for para in paragraphs:
-        if size + len(para) > chunk_size and current:
-            pages.append("\n\n".join(current))
-            current, size = [para], len(para)
-        else:
-            current.append(para)
-            size += len(para)
-
-    if current:
-        pages.append("\n\n".join(current))
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", "।", ".", " ", ""],
+    )
+    pages = splitter.split_text(text)
 
     # Guarantee at least one page even for very short text
     if not pages:
@@ -425,13 +474,17 @@ def build_rag_chunks(pages_data: dict, embedding_method: str) -> list[dict]:
 
     if embedding_method == "multilingual_local":
         t0 = time.perf_counter()
-        embeddings = _embed_local([c["text"] for c in chunks])
+        # Normalize abbreviations before embedding so "mca" queries match "M.C.A." chunks.
+        # The original text is kept in chunk["text"] for display; only the embedding uses norm.
+        norm_texts = [_normalize_abbr(c["text"]) for c in chunks]
+        embeddings = _embed_local(norm_texts)
         for chunk, emb in zip(chunks, embeddings):
             chunk["embedding"] = emb
         logger.info("Local embeddings built | chunks=%d | time=%.2fs", len(chunks), time.perf_counter() - t0)
     elif embedding_method == "gemini_embedding":
         t0 = time.perf_counter()
-        embeddings = _embed_gemini([c["text"] for c in chunks])
+        norm_texts = [_normalize_abbr(c["text"]) for c in chunks]
+        embeddings = _embed_gemini(norm_texts)
         for chunk, emb in zip(chunks, embeddings):
             chunk["embedding"] = emb
         logger.info("Gemini embeddings built | chunks=%d | time=%.2fs", len(chunks), time.perf_counter() - t0)
@@ -455,17 +508,18 @@ def retrieve_relevant_context(question: str, chunks_path: str,
     has_embeddings = "embedding" in chunks[0]
 
     if embedding_method != "bm25" and has_embeddings:
+        norm_q = _normalize_abbr(question)
         if embedding_method == "multilingual_local":
-            q_emb = _embed_local([question])[0]
+            q_emb = _embed_local([norm_q])[0]
         else:
-            q_emb = _embed_gemini([question])[0]
+            q_emb = _embed_gemini([norm_q])[0]
         scores = _cosine_scores(q_emb, [c["embedding"] for c in chunks])
     else:
         if embedding_method != "bm25":
             logger.warning("Embeddings missing in chunks — falling back to BM25")
-        tokenized = [c["text"].lower().split() for c in chunks]
+        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
         bm25 = BM25Okapi(tokenized)
-        scores = bm25.get_scores(question.lower().split())
+        scores = bm25.get_scores(_normalize_abbr(question).lower().split())
 
     ranked   = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     selected = sorted(ranked)
@@ -481,11 +535,171 @@ def retrieve_relevant_context(question: str, chunks_path: str,
     return result
 
 
+# ── Liked-QA Qdrant cache ──────────────────────────────────────────────────────
+
+_LIKED_SUFFIX     = "_liked"
+_LIKED_VECTOR_DIM = 384   # sentence-transformers multilingual-local, always
+
+
+def get_question_embedding(question: str) -> "np.ndarray":
+    """
+    Compute a sentence-transformer embedding for *question*.
+
+    Always uses multilingual-local (384-dim, L2-normalised) regardless of the
+    RAG embedding setting so the session cache and liked-QA lookup share a
+    single, consistent vector space.
+    """
+    import numpy as np
+    return np.array(_embed_local([question])[0], dtype=np.float32)
+
+
+def _liked_col(base: str) -> str:
+    return base + _LIKED_SUFFIX
+
+
+def _ensure_liked_collection(base: str) -> None:
+    """Create the liked-QA Qdrant collection if it does not already exist."""
+    from qdrant_client.models import Distance, VectorParams
+    client = get_qdrant_client()
+    col    = _liked_col(base)
+    names  = {c.name for c in client.get_collections().collections}
+    if col not in names:
+        client.create_collection(
+            collection_name=col,
+            vectors_config=VectorParams(size=_LIKED_VECTOR_DIM, distance=Distance.COSINE),
+        )
+        logger.info("Liked-QA collection created: %s", col)
+
+
+def search_liked_qa(
+    question_embedding: "np.ndarray",
+    base_collection: str,
+    threshold: float = 0.90,
+) -> "tuple[str, float] | None":
+    """
+    Search the liked-QA Qdrant collection for an answer whose question
+    embedding is ≥ *threshold* similar to *question_embedding*.
+
+    Returns (answer_text, score) on a hit, or None on a miss / missing collection.
+    """
+    client = get_qdrant_client()
+    col    = _liked_col(base_collection)
+    names  = {c.name for c in client.get_collections().collections}
+    if col not in names:
+        return None
+
+    hits = client.query_points(
+        collection_name=col,
+        query=question_embedding.tolist(),
+        limit=1,
+        with_payload=True,
+        score_threshold=threshold,
+    ).points
+
+    if not hits:
+        return None
+
+    best = hits[0]
+    logger.info(
+        "Liked-QA HIT | collection=%s | score=%.3f | q=%r",
+        col, best.score, best.payload.get("question", "")[:80],
+    )
+    return best.payload["answer"], best.score
+
+
+def add_liked_qa_to_qdrant(
+    question: str,
+    answer: str,
+    question_embedding: "np.ndarray",
+    base_collection: str,
+    message_id: int,
+) -> int:
+    """
+    Store a liked Q&A pair in the liked-QA Qdrant collection.
+    Returns the Qdrant point ID (a random 63-bit integer).
+    """
+    import random
+    from qdrant_client.models import PointStruct
+
+    _ensure_liked_collection(base_collection)
+    client   = get_qdrant_client()
+    col      = _liked_col(base_collection)
+    point_id = random.getrandbits(63)
+
+    client.upsert(
+        collection_name=col,
+        points=[PointStruct(
+            id=point_id,
+            vector=question_embedding.tolist(),
+            payload={"question": question, "answer": answer, "message_id": message_id},
+        )],
+    )
+    logger.info(
+        "Liked-QA added | collection=%s | point_id=%d | message_id=%d",
+        col, point_id, message_id,
+    )
+    return point_id
+
+
+def delete_liked_collection(base_collection: str) -> None:
+    """Remove the liked-QA collection for a document (called on document delete)."""
+    client = get_qdrant_client()
+    col    = _liked_col(base_collection)
+    try:
+        client.delete_collection(col)
+        logger.info("Liked-QA collection deleted: %s", col)
+    except Exception as exc:
+        logger.warning("Could not delete liked-QA collection %s: %s", col, exc)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+_ECHOED_HINT_RE = _re.compile(
+    r"^\s*"
+    r"(?:"
+    # parenthetical hint we append: "(Please reply in English.)" etc.
+    r"\([^)]{0,120}\)\s*"
+    r"|"
+    # [INTERNAL: ...] or [INST: ...] style tags the model may echo
+    r"\[(?:INTERNAL|INST)[^\]]{0,200}\]\s*"
+    r"|"
+    # [INST]...[/INST] reasoning block
+    r"\[INST\][\s\S]{0,600}?\[/INST\]\s*"
+    r")",
+    _re.DOTALL,
+)
+
+
+def _scrub_echoed_hint_stream(gen):
+    """
+    Buffer the start of a streaming response and strip any echoed language-hint
+    prefix before yielding tokens to the caller.
+    """
+    BUFFER_CAP = 400          # [INST]...[/INST] blocks can be ~300 chars
+    buf = ""
+    prefix_stripped = False
+
+    for token in gen:
+        if prefix_stripped:
+            yield token
+            continue
+        buf += token
+        # Flush once we have enough context OR we see a clear end of any tag
+        if len(buf) >= BUFFER_CAP or (buf.lstrip() and not buf.lstrip().startswith(("[", "("))):
+            buf = _ECHOED_HINT_RE.sub("", buf).lstrip()
+            prefix_stripped = True
+            if buf:
+                yield buf
+
+    if not prefix_stripped:
+        buf = _ECHOED_HINT_RE.sub("", buf).lstrip()
+        if buf:
+            yield buf
+
+
 def ask_streaming(question: str, history: list, markdown_text: str,
-                  usage_out: dict or None = None,
-                  gemini_cache_name: str or None = None):
+                  usage_out: dict | None = None,
+                  gemini_cache_name: str | None = None):
     """
     Generator that yields string tokens from the active LLM's streaming response.
     Used by the /chat SSE route.
@@ -507,11 +721,11 @@ def ask_streaming(question: str, history: list, markdown_text: str,
             # Only use cache for the primary model — cache is model-specific
             cache = gemini_cache_name if attempt == 0 else None
             try:
-                yield from _ask_streaming_gemini(
+                yield from _scrub_echoed_hint_stream(_ask_streaming_gemini(
                     question, history, markdown_text, model,
                     usage_out=usage_out, cache_name=cache,
                     fallback_contact=fallback_contact,
-                )
+                ))
                 break  # success — stop trying fallbacks
             except GeminiUnavailableError:
                 if attempt < len(models_to_try) - 1:
@@ -523,15 +737,15 @@ def ask_streaming(question: str, history: list, markdown_text: str,
                     logger.error("All Gemini fallback models exhausted — raising 503")
                     raise
     elif config.provider == "sarvam":
-        yield from _ask_streaming_sarvam(
+        yield from _scrub_echoed_hint_stream(_ask_streaming_sarvam(
             question, history, markdown_text, config.sarvam_model,
             usage_out=usage_out, fallback_contact=fallback_contact,
-        )
+        ))
     else:  # ollama
-        yield from _ask_streaming_ollama(
+        yield from _scrub_echoed_hint_stream(_ask_streaming_ollama(
             question, history, markdown_text, config.ollama_model,
             usage_out=usage_out, fallback_contact=fallback_contact,
-        )
+        ))
 
 
 def ask(question: str, history: list, markdown_text: str) -> tuple[str, float]:

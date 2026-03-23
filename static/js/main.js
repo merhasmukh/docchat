@@ -40,8 +40,6 @@ const chatWindow      = document.getElementById("chat-window");
 const questionInput   = document.getElementById("question-input");
 const sendBtn         = document.getElementById("send-btn");
 const resetBtn        = document.getElementById("reset-btn");
-const docIndicator    = document.getElementById("doc-indicator");
-const docIndicatorTxt = document.getElementById("doc-indicator-text");
 
 // Modal refs — step 1
 const userModal       = document.getElementById("user-modal");
@@ -116,13 +114,11 @@ let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, 
 })();
 
 // ─── Mode helpers ─────────────────────────────────────────────────────────────
-function showChatMode(filename) {
+function showChatMode(_filename) {
   userModal.classList.add("hidden");
   noDocSection.classList.add("hidden");
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
-  docIndicatorTxt.textContent = filename;
-  docIndicator.classList.add("loaded");
   questionInput.focus();
 }
 
@@ -131,8 +127,6 @@ function showNoDocMode() {
   chatSection.classList.add("hidden");
   noDocSection.classList.remove("hidden");
   resetBtn.classList.add("hidden");
-  docIndicatorTxt.textContent = "No document loaded";
-  docIndicator.classList.remove("loaded");
 }
 
 // ─── Load history on session resume ──────────────────────────────────────────
@@ -149,6 +143,9 @@ async function loadHistory() {
         const bubble = appendAssistantBubble();
         bubble.classList.remove("streaming");
         setAssistantContent(bubble, msg.content);
+        if (msg.id) {
+          _attachFeedbackButtons(bubble, msg.id, msg.liked);
+        }
       }
     }
     scrollToBottom();
@@ -160,10 +157,6 @@ function showUserModal() {
   chatSection.classList.add("hidden");
   resetBtn.classList.add("hidden");
   noDocSection.classList.add("hidden");
-  if (currentFilename) {
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
-  }
   // Show/hide fields based on admin config
   const nameField   = document.getElementById("um-field-name");
   const emailField  = document.getElementById("um-field-email");
@@ -238,7 +231,7 @@ function validateMobile() {
   const pattern = opt.dataset.pattern || "";
 
   if (!digits) {
-    mobileError.textContent = "Please enter your mobile number.";
+    mobileError.textContent = "કૃપા કરી તમારો મોબાઈલ નંબર જણાવો ";
     mobileError.classList.remove("hidden");
     return null;
   }
@@ -289,7 +282,7 @@ userForm.addEventListener("submit", async (e) => {
   const email = emailInput.value.trim();
 
   if (sessionCfg.collect_name && !name) {
-    modalError.textContent = "Please enter your name.";
+    modalError.textContent = "કૃપા કરી તમારું નામ જણાવો";
     modalError.classList.remove("hidden");
     return;
   }
@@ -473,8 +466,6 @@ modalCloseBtn.addEventListener("click", () => {
   if (currentFilename) {
     chatSection.classList.remove("hidden");
     resetBtn.classList.remove("hidden");
-    docIndicatorTxt.textContent = currentFilename;
-    docIndicator.classList.add("loaded");
   }
 });
 
@@ -497,6 +488,13 @@ resetBtn.addEventListener("click", () => {
   showUserModal();
 });
 
+// ─── Auto-expand textarea ─────────────────────────────────────────────────────
+function autoResize() {
+  questionInput.style.height = "auto";
+  questionInput.style.height = questionInput.scrollHeight + "px";
+}
+questionInput.addEventListener("input", autoResize);
+
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 sendBtn.addEventListener("click", sendMessage);
 questionInput.addEventListener("keydown", (e) => {
@@ -509,6 +507,7 @@ function sendMessage() {
 
   appendUserBubble(question);
   questionInput.value = "";
+  questionInput.style.height = "auto";
   setInputEnabled(false);
 
   const asmBubble = appendAssistantBubble();
@@ -554,9 +553,15 @@ async function streamChat(question, bubble) {
         if (!line.startsWith("data: ")) continue;
         const token = line.slice(6);
 
-        if (token === "[DONE]") {
+        if (token === "[DONE]" || token.startsWith("[DONE:")) {
           setAssistantContent(bubble, rawText);
           bubble.classList.remove("streaming");
+          // Reveal feedback buttons if we have a message PK
+          const match = token.match(/^\[DONE:(\d+)\]$/);
+          if (match) {
+            const msgId = parseInt(match[1], 10);
+            _attachFeedbackButtons(bubble, msgId, null);
+          }
           setInputEnabled(true);
           scrollToBottom();
           return;
@@ -583,12 +588,27 @@ async function streamChat(question, bubble) {
 }
 
 // ─── Bubble builders ──────────────────────────────────────────────────────────
+function makeTimestamp() {
+  const now = new Date();
+  let h = now.getHours(), m = now.getMinutes();
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  const span = document.createElement("span");
+  span.className = "msg-time";
+  span.textContent = h + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
+  return span;
+}
+
 function appendUserBubble(text) {
   removeWelcome();
+  const wrap = document.createElement("div");
+  wrap.className = "bubble-wrapper user-wrapper";
   const div = document.createElement("div");
   div.className = "bubble user";
   div.textContent = text;
-  chatWindow.appendChild(div);
+  wrap.appendChild(div);
+  wrap.appendChild(makeTimestamp());
+  chatWindow.appendChild(wrap);
   scrollToBottom();
 }
 
@@ -615,12 +635,75 @@ function appendAssistantBubble() {
     });
   });
 
+  const likeBtn = document.createElement("button");
+  likeBtn.className = "feedback-btn like-btn";
+  likeBtn.title = "Good answer";
+  likeBtn.hidden = true;
+  likeBtn.innerHTML = '<i class="fa-regular fa-thumbs-up"></i>';
+
+  const dislikeBtn = document.createElement("button");
+  dislikeBtn.className = "feedback-btn dislike-btn";
+  dislikeBtn.title = "Bad answer";
+  dislikeBtn.hidden = true;
+  dislikeBtn.innerHTML = '<i class="fa-regular fa-thumbs-down"></i>';
+
   actions.appendChild(copyBtn);
+  actions.appendChild(likeBtn);
+  actions.appendChild(dislikeBtn);
   wrapper.appendChild(div);
   wrapper.appendChild(actions);
+  wrapper.appendChild(makeTimestamp());
   chatWindow.appendChild(wrapper);
   scrollToBottom();
   return div;
+}
+
+function _attachFeedbackButtons(bubble, msgId, liked = null) {
+  const actions = bubble.parentElement && bubble.parentElement.querySelector(".bubble-actions");
+  if (!actions) return;
+  const likeBtn = actions.querySelector(".like-btn");
+  const dislikeBtn = actions.querySelector(".dislike-btn");
+  if (!likeBtn || !dislikeBtn) return;
+
+  likeBtn.hidden = false;
+  dislikeBtn.hidden = false;
+
+  // Restore previous feedback state
+  if (liked === true) {
+    likeBtn.classList.add("active");
+    likeBtn.innerHTML = '<i class="fa-solid fa-thumbs-up"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else if (liked === false) {
+    dislikeBtn.classList.add("active");
+    dislikeBtn.innerHTML = '<i class="fa-solid fa-thumbs-down"></i>';
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+  } else {
+    likeBtn.addEventListener("click", () => _submitFeedback(msgId, true, likeBtn, dislikeBtn));
+    dislikeBtn.addEventListener("click", () => _submitFeedback(msgId, false, likeBtn, dislikeBtn));
+  }
+}
+
+async function _submitFeedback(msgId, liked, likeBtn, dislikeBtn) {
+  // Optimistic UI update
+  likeBtn.classList.toggle("active", liked);
+  dislikeBtn.classList.toggle("active", !liked);
+  likeBtn.disabled = true;
+  dislikeBtn.disabled = true;
+
+  try {
+    await fetch("/feedback/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Chat-Token": getToken(),
+      },
+      body: JSON.stringify({ message_id: msgId, liked }),
+    });
+  } catch (_) {
+    // Fire-and-forget; UI already updated
+  }
 }
 
 function setAssistantContent(bubble, rawMarkdown) {

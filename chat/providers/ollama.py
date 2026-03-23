@@ -3,7 +3,8 @@ import time
 
 import ollama
 
-from .utils import CONVERSATIONAL_SYSTEM_PROMPT, build_document_prompt, is_conversational
+from .utils import (CONVERSATIONAL_SYSTEM_PROMPT, add_language_hint,
+                    build_document_prompt, is_conversational)
 
 
 def _build_messages(question: str, history: list, markdown_text: str,
@@ -18,19 +19,10 @@ def _build_messages(question: str, history: list, markdown_text: str,
         )
 
     # Document question — use strict prompt with context
-    constrained_question = (
-        f"{question}\n\n"
-        "[IMPORTANT: Answer using ONLY the document context in the system prompt. "
-        "If the answer is not there, say so — do not use outside knowledge.]\n"
-        "[CRITICAL LANGUAGE RULE: Reply in the exact same language as the question above. "
-        "Gujarati words/script → reply in Gujarati (keep English acronyms as-is). "
-        "Hindi/Devanagari words → reply in Hindi. English only → reply in English. "
-        "NEVER translate a Gujarati or Hindi question into English.]"
-    )
     return (
         [{"role": "system", "content": build_document_prompt(markdown_text, fallback_contact)}]
         + trimmed_history
-        + [{"role": "user", "content": constrained_question}]
+        + [{"role": "user", "content": add_language_hint(question)}]
     )
 
 

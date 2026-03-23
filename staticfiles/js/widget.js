@@ -17,8 +17,10 @@
  *   data-position  "bottom-right" (default) or "bottom-left".
  *   data-color     Accent colour for the bubble and widget header. Default: #432323.
  *   data-title     Widget header title. Default: "DocChat".
- *   data-greeting  Optional opening message shown as the first assistant bubble.
- *   data-mode      "popup" (default corner popup) or "fullpage" (full viewport overlay).
+ *   data-greeting    Optional opening message shown as the first assistant bubble.
+ *   data-nudge       Optional proactive message shown if the user hasn't typed after data-nudge-delay seconds.
+ *   data-nudge-delay Seconds to wait before showing the nudge message. Default: 10.
+ *   data-mode        "popup" (default corner popup) or "fullpage" (full viewport overlay).
  */
 (function () {
   'use strict';
@@ -26,15 +28,17 @@
   var s = document.currentScript;
   if (!s) return; // guard: loaded async/defer
 
-  var server   = (s.getAttribute('data-server')   || '').replace(/\/$/, '');
-  var position = s.getAttribute('data-position')  || 'bottom-right';
-  var color    = s.getAttribute('data-color')     || '#432323';
-  var title    = s.getAttribute('data-title')     || 'Gujarat Vidyapith AI';
-  var greeting = s.getAttribute('data-greeting')  || '';
-  var mode     = s.getAttribute('data-mode')      || 'popup';
+  var server     = (s.getAttribute('data-server')   || '').replace(/\/$/, '');
+  var position   = s.getAttribute('data-position')  || 'bottom-right';
+  var color      = s.getAttribute('data-color')     || '#C45500';
+  var title      = s.getAttribute('data-title')     || 'DocChat';
+  var greeting   = s.getAttribute('data-greeting')  || '';
+  var nudge      = s.getAttribute('data-nudge')     || '';
+  var nudgeDelay = s.getAttribute('data-nudge-delay') || '10';
+  var mode       = s.getAttribute('data-mode')      || 'popup';
 
   if (!server) {
-    console.warn('[Gujarat Vidyapith AI] data-server attribute is required.');
+    console.warn('[DocChat] data-server attribute is required.');
     return;
   }
 
@@ -42,14 +46,16 @@
   var edge    = isRight ? 'right' : 'left';
 
   // ── Build iframe URL ──────────────────────────────────────────────────────
-  var params = new URLSearchParams({ color: color, title: title, greeting: greeting, mode: mode });
+  var params = new URLSearchParams({ color: color, title: title, greeting: greeting, nudge: nudge, nudge_delay: nudgeDelay, mode: mode });
   var iframeUrl = server + '/widget/?' + params.toString();
 
   // ── Inject styles ─────────────────────────────────────────────────────────
   var style = document.createElement('style');
   style.textContent = [
     '#docchat-bubble{',
-    '  position:fixed;bottom:24px;' + edge + ':24px;',
+    '  position:fixed;',
+    '  bottom:calc(24px + env(safe-area-inset-bottom,0px));',
+    '  ' + edge + ':max(24px,calc(24px + env(safe-area-inset-' + edge + ',0px)));',
     '  width:56px;height:56px;border-radius:50%;',
     '  background:' + color + ';border:none;cursor:pointer;',
     '  box-shadow:0 4px 16px rgba(0,0,0,.28);',
@@ -58,13 +64,16 @@
     '  outline:none;',
     '}',
     '#docchat-bubble:hover{transform:scale(1.08);box-shadow:0 6px 20px rgba(0,0,0,.35);}',
+    /* Minimum 56x56 tap target, already set. Active feedback for touch. */
+    '#docchat-bubble:active{transform:scale(.94);}',
     '#docchat-bubble svg{width:26px;height:26px;fill:#fff;pointer-events:none;}',
 
     '#docchat-wrap{',
-    '  position:fixed;' + edge + ':24px;bottom:92px;',
+    '  position:fixed;' + edge + ':24px;',
+    '  bottom:calc(92px + env(safe-area-inset-bottom,0px));',
     '  width:380px;height:560px;',
     '  border-radius:16px;overflow:hidden;',
-    '  box-shadow:0 8px 32px rgba(0,0,0,.22);',
+    '  box-shadow:0 8px 32px rgba(196,85,0,.18);',
     '  z-index:999997;display:none;',
     '  transform:scale(.95) translateY(8px);opacity:0;',
     '  transition:transform .2s,opacity .2s;',
@@ -82,7 +91,17 @@
 
     /* mobile: always full viewport */
     '@media(max-width:440px){',
-    '  #docchat-wrap{top:0;left:0;right:0;bottom:0;width:100%;height:100%;border-radius:0;}',
+    '  #docchat-wrap{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;border-radius:0!important;}',
+    '  #docchat-bubble{bottom:max(16px,calc(env(safe-area-inset-bottom,0px) + 16px));}',
+    '}',
+
+    /* When the iframe covers the full viewport (fullpage mode or mobile popup),
+       move the close button to the top-right so it doesn't overlap the input bar */
+    '#docchat-bubble.dc-top{',
+    '  bottom:auto!important;',
+    '  top:calc(16px + env(safe-area-inset-top,0px))!important;',
+    '  right:16px!important;',
+    '  left:auto!important;',
     '}',
   ].join('');
   document.head.appendChild(style);
@@ -112,14 +131,24 @@
 
   // ── Toggle open / close ───────────────────────────────────────────────────
   var isOpen = false;
+
+  // Returns true when the iframe covers the full viewport so the close button
+  // needs to move to the top-right instead of sitting over the input bar.
+  function coveringViewport() {
+    return mode === 'fullpage' || window.innerWidth <= 440;
+  }
+
   btn.addEventListener('click', function () {
     isOpen = !isOpen;
     btn.innerHTML = isOpen ? ICON_CLOSE : ICON_CHAT;
     btn.setAttribute('aria-label', (isOpen ? 'Close ' : 'Open ') + title);
     if (isOpen) {
+      if (coveringViewport()) btn.classList.add('dc-top');
       wrap.classList.add('dc-open');
       requestAnimationFrame(function () { wrap.classList.add('dc-visible'); });
+      frame.contentWindow.postMessage({ type: 'docchat:opened' }, server || '*');
     } else {
+      btn.classList.remove('dc-top');
       wrap.classList.remove('dc-visible');
       setTimeout(function () { wrap.classList.remove('dc-open'); }, 200);
     }
