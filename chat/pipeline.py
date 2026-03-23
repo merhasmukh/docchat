@@ -329,14 +329,12 @@ _EMBEDDING_DIMS = {
 
 
 def get_qdrant_client():
-    """Return a process-level singleton Qdrant client (embedded, local disk)."""
+    """Return a process-level singleton Qdrant client (Qdrant server)."""
     global _qdrant_client
     if _qdrant_client is None:
-        from django.conf import settings
         from qdrant_client import QdrantClient
-        Path(settings.QDRANT_PATH).mkdir(parents=True, exist_ok=True)
-        _qdrant_client = QdrantClient(path=str(settings.QDRANT_PATH))
-        logger.info("Qdrant client initialised at %s", settings.QDRANT_PATH)
+        _qdrant_client = QdrantClient(url="http://localhost:6333")
+        logger.info("Qdrant client initialised at http://localhost:6333")
     return _qdrant_client
 
 
