@@ -280,6 +280,23 @@ def _normalize_abbr(text: str) -> str:
     """Strip dots from dotted abbreviations to unify 'M.C.A.' with 'MCA'."""
     return _ABBR_RE.sub(lambda m: m.group(0).replace(".", ""), text)
 
+
+# Strip ASCII punctuation only — preserves Unicode combining marks (Gujarati ā/ā,
+# Hindi maatras, virama, etc.) which Python's \w does NOT match but are part of words.
+# Matches any non-whitespace ASCII char that is not a-z / 0-9 / underscore.
+_PUNCT_RE = _re.compile(r'[^\w\s\u0080-\uFFFF]', _re.UNICODE)
+
+
+def _tokenize_bm25(text: str) -> list[str]:
+    """
+    Normalize abbreviations → lowercase → strip ASCII punctuation → split.
+    Ensures 'brs?' and 'B.R.S.' both tokenise to ['brs'].
+    Gujarati/Hindi Unicode script (including combining vowel signs) is preserved.
+    """
+    normalized = _normalize_abbr(text).lower()
+    cleaned = _PUNCT_RE.sub(" ", normalized)
+    return cleaned.split()
+
 _st_model = None
 
 def _get_st_model():
@@ -372,13 +389,83 @@ def store_rag_chunks_qdrant(chunks: list[dict], collection_name: str, embedding_
     )
 
 
+def _retrieve_hybrid_qdrant(question: str, collection_name: str,
+                             embedding_method: str, top_k: int) -> str:
+    """
+    Hybrid BM25 + vector retrieval with Reciprocal Rank Fusion (RRF).
+
+    Runs BM25 over all chunks (in-memory) and vector search (Qdrant), then
+    merges the two ranked lists using RRF so pages that score well in both
+    methods are surfaced first.  Returns the same formatted string as
+    retrieve_relevant_context_qdrant.
+    """
+    client = get_qdrant_client()
+    K = 60  # RRF constant — standard value, balances early vs. late ranks
+
+    # 1. Scroll all points (payload only, no stored vectors needed)
+    all_points, _ = client.scroll(
+        collection_name=collection_name, limit=10_000,
+        with_payload=True, with_vectors=False,
+    )
+    if not all_points:
+        return ""
+
+    page_texts = {p.payload["page"]: p.payload["text"] for p in all_points}
+
+    # 2. BM25 ranking over every chunk
+    corpus = [_tokenize_bm25(p.payload["text"]) for p in all_points]
+    bm25 = BM25Okapi(corpus)
+    q_tokens = _tokenize_bm25(question)
+    bm25_scores = bm25.get_scores(q_tokens)
+    bm25_ranked = sorted(range(len(all_points)), key=lambda i: bm25_scores[i], reverse=True)
+    bm25_rank = {all_points[i].payload["page"]: rank for rank, i in enumerate(bm25_ranked)}
+
+    # 3. Vector ranking via Qdrant (retrieve 4× as many candidates for RRF pool)
+    norm_q = _normalize_abbr(question)
+    if embedding_method == "gemini_embedding":
+        q_emb = _embed_gemini([norm_q])[0]
+    else:
+        q_emb = _embed_local([norm_q])[0]
+    vec_limit = min(top_k * 4, len(all_points))
+    vec_hits = client.query_points(
+        collection_name=collection_name,
+        query=q_emb,
+        limit=vec_limit,
+        with_payload=True,
+    ).points
+    vec_rank = {h.payload["page"]: rank for rank, h in enumerate(vec_hits)}
+
+    # 4. RRF fusion: score(page) = 1/(K + bm25_rank) + 1/(K + vec_rank)
+    #    Pages absent from the vector pool get a heavy penalty rank.
+    rrf: dict[int, float] = {}
+    for page in page_texts:
+        r_b = bm25_rank.get(page, len(all_points))
+        r_v = vec_rank.get(page, vec_limit)
+        rrf[page] = 1.0 / (K + r_b) + 1.0 / (K + r_v)
+
+    top_pages = sorted(rrf, key=rrf.get, reverse=True)[:top_k]
+    top_pages.sort()  # reading order within the document
+
+    logger.info(
+        "Hybrid RAG (RRF) | collection=%s | q_chars=%d | top_k=%d | pages=%s",
+        collection_name, len(question), top_k, top_pages,
+    )
+    return "\n\n---\n\n".join(
+        f"<!-- Page {p} -->\n\n{page_texts[p]}" for p in top_pages
+    )
+
+
 def retrieve_relevant_context_qdrant(question: str, collection_name: str,
                                       embedding_method: str = "bm25", top_k: int = 5) -> str:
     """
     Retrieve the top-k most relevant chunks from Qdrant.
-    - Vector methods: cosine similarity search.
-    - BM25: fetch all points via scroll, compute BM25 in-memory.
+    - Vector methods (gemini_embedding, multilingual_local): hybrid BM25+vector with RRF.
+    - BM25: fetch all points via scroll, compute BM25 in-memory only.
     """
+    # Hybrid search for any embedding-based method
+    if embedding_method in ("gemini_embedding", "multilingual_local"):
+        return _retrieve_hybrid_qdrant(question, collection_name, embedding_method, top_k)
+
     client = get_qdrant_client()
 
     if embedding_method == "bm25":
@@ -386,8 +473,8 @@ def retrieve_relevant_context_qdrant(question: str, collection_name: str,
             collection_name=collection_name, with_payload=True, limit=10_000
         )
         chunks    = [{"page": p.payload["page"], "text": p.payload["text"]} for p in all_points]
-        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
-        scores    = BM25Okapi(tokenized).get_scores(_normalize_abbr(question).lower().split())
+        tokenized = [_tokenize_bm25(c["text"]) for c in chunks]
+        scores    = BM25Okapi(tokenized).get_scores(_tokenize_bm25(question))
         ranked    = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
         selected  = sorted(ranked)
         result    = "\n\n---\n\n".join(
@@ -515,9 +602,9 @@ def retrieve_relevant_context(question: str, chunks_path: str,
     else:
         if embedding_method != "bm25":
             logger.warning("Embeddings missing in chunks — falling back to BM25")
-        tokenized = [_normalize_abbr(c["text"]).lower().split() for c in chunks]
+        tokenized = [_tokenize_bm25(c["text"]) for c in chunks]
         bm25 = BM25Okapi(tokenized)
-        scores = bm25.get_scores(_normalize_abbr(question).lower().split())
+        scores = bm25.get_scores(_tokenize_bm25(question))
 
     ranked   = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
     selected = sorted(ranked)
