@@ -237,7 +237,7 @@ body {
 .wg-country-select {
   flex: 0 0 auto;
   height: 40px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: none;
   border-right: 1.5px solid var(--wg-border);
   border-radius: 0;

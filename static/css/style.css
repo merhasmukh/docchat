@@ -792,7 +792,7 @@ body {
 .um-country-select {
   flex: 0 0 auto;
   height: 42px;
-  padding: 0 0.5rem;
+  padding: 0 0.625rem;
   border: 1.5px solid var(--border);
   border-right: none;
   border-radius: 8px 0 0 8px;
