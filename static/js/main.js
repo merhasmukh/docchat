@@ -73,7 +73,18 @@ let otpResendUsed     = false;
 let currentFilename = null;
 
 // Session config (loaded from /session-config/ on page load)
-let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false };
+let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false, welcome_greeting: "" };
+let _pendingName = "";
+
+function showGreeting(name) {
+  const raw = sessionCfg.welcome_greeting || "";
+  if (!raw) return;
+  const text = name ? raw.replace(/\{name\}/g, name) : raw.replace(/\{name\}[,،]?\s*/g, "");
+  if (!text.trim()) return;
+  const bubble = appendAssistantBubble();
+  bubble.classList.remove("streaming");
+  setAssistantContent(bubble, text);
+}
 
 // ─── Page load: fetch session config + check active document + session ─────────
 (async function init() {
@@ -134,6 +145,7 @@ async function loadHistory() {
   try {
     const res  = await fetch("/history/", { headers: apiHeaders() });
     const data = await res.json();
+    showGreeting(data.user_name || "");
     if (!data.messages || data.messages.length === 0) return;
 
     for (const msg of data.messages) {
@@ -266,6 +278,7 @@ async function createDirectSession(payload) {
     if (data.status === "ok") {
       setToken(data.token);
       showChatMode(currentFilename);
+      showGreeting(payload.name || "");
       return true;
     } else {
       return { error: data.message || "Failed to start session. Please try again." };
@@ -320,6 +333,7 @@ userForm.addEventListener("submit", async (e) => {
   }
 
   // ── OTP flow ─────────────────────────────────────────────────────────────────
+  _pendingName = name;
   modalSubmitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending code…';
 
   try {
@@ -387,6 +401,8 @@ otpForm.addEventListener("submit", async (e) => {
       stopOtpCountdown();
       setToken(data.token);
       showChatMode(currentFilename);
+      showGreeting(_pendingName);
+      _pendingName = "";
     } else {
       otpError.textContent = data.message || "Verification failed. Please try again.";
       otpError.classList.remove("hidden");

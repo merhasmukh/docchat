@@ -383,10 +383,11 @@ def session_config_view(request):
     from .models import ChatSessionConfig
     cfg = ChatSessionConfig.get_active()
     return Response({
-        "collect_name":   cfg.collect_name,
-        "collect_email":  cfg.collect_email,
-        "verify_email":   cfg.verify_email,
-        "collect_mobile": cfg.collect_mobile,
+        "collect_name":      cfg.collect_name,
+        "collect_email":     cfg.collect_email,
+        "verify_email":      cfg.verify_email,
+        "collect_mobile":    cfg.collect_mobile,
+        "welcome_greeting":  cfg.welcome_greeting,
     })
 
 
@@ -666,7 +667,8 @@ def chat_view(request):
     elif context_mode == "rag" and has_chunks:
         from .pipeline import retrieve_relevant_context_qdrant
         markdown_text = retrieve_relevant_context_qdrant(
-            _rag_query(question, history), qdrant_collection, rag_embedding
+            _rag_query(question, history), qdrant_collection, rag_embedding,
+            top_k=cfg_active.rag_top_k,
         )
 
     elif cfg_active.provider == "sarvam":
@@ -682,7 +684,8 @@ def chat_view(request):
             elif has_chunks:
                 from .pipeline import retrieve_relevant_context_qdrant
                 markdown_text = retrieve_relevant_context_qdrant(
-                    _rag_query(question, history), qdrant_collection, rag_embedding, top_k=5
+                    _rag_query(question, history), qdrant_collection, rag_embedding,
+                    top_k=cfg_active.rag_top_k,
                 )
             else:
                 markdown_text = full_text[:_SARVAM_BUDGET]

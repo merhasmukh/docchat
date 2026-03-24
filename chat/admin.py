@@ -459,7 +459,7 @@ class DocumentAdmin(admin.ModelAdmin):
 @admin.register(LLMConfig)
 class LLMConfigAdmin(admin.ModelAdmin):
     list_display = ("provider", "ollama_model", "gemini_model", "ocr_engine", "rag_embedding",
-                    "context_mode", "rag_chunk_size", "rag_chunk_overlap",
+                    "context_mode", "rag_chunk_size", "rag_chunk_overlap", "rag_top_k",
                     "use_session_cache", "use_gemini_cache", "embed_script_link")
 
     def has_add_permission(self, request):
@@ -505,6 +505,13 @@ class ChatSessionConfigAdmin(admin.ModelAdmin):
             "description": (
                 "Control what information users must provide before starting a chat. "
                 "Disabling collection reduces friction and improves user retention."
+            ),
+        }),
+        ("Greeting Message", {
+            "fields": ("welcome_greeting",),
+            "description": (
+                "First message shown to the user when chat starts. "
+                "Use {name} to insert the user's name."
             ),
         }),
     ]

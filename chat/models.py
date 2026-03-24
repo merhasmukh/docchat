@@ -276,6 +276,13 @@ class LLMConfig(models.Model):
             "Overlap ensures context at chunk boundaries is not lost. Default: 100."
         ),
     )
+    rag_top_k = models.IntegerField(
+        default=7,
+        help_text=(
+            "Number of chunks retrieved per RAG query. "
+            "Higher values provide more context but increase token cost. Default: 7."
+        ),
+    )
     agent_mode = models.BooleanField(
         default=False,
         help_text=(
@@ -320,7 +327,6 @@ class DocumentConfig(models.Model):
             "Example:\n"
             "  Gujarat Vidyapith\n"
             "  Ashram Marg, Navrangpura, Ahmedabad – 380 009\n"
-            "  Phone: 079-27541148\n"
             "  Website: https://gujaratvidyapith.org/"
         ),
     )
@@ -362,6 +368,18 @@ class ChatSessionConfig(models.Model):
         help_text=(
             "Require email OTP verification. Only applies when 'Collect email' is enabled. "
             "Disable to collect email without sending a verification code."
+        ),
+    )
+    welcome_greeting = models.TextField(
+        blank=True,
+        default=(
+            "નમસ્કાર {name}, ગૂજરાત વિદ્યાપીઠ આપનું સ્વાગત કરે છે.\n\n"
+            "હું તમારો AI સહાયક છું. હું તમને ગૂજરાત વિદ્યાપીઠમાં પ્રવેશ મેળવવા બાબતે શું મદદ કરી શકું?\n\n"
+            "કૃપા કરીને તમારો પ્રશ્ન નીચે જણાવો."
+        ),
+        help_text=(
+            "First message shown to the user when chat starts. "
+            "Use {name} to insert the user's name (silently removed if name is not collected)."
         ),
     )
 

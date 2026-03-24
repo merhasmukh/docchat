@@ -101,15 +101,12 @@ def _ask_streaming_gemini(question: str, history: list, markdown_text: str, mode
     if conversational:
         llm_config = genai_types.GenerateContentConfig(system_instruction=CONVERSATIONAL_SYSTEM_PROMPT)
     elif cached:
-        # For cached path: inject fallback_contact as an additional per-request
-        # system instruction on top of the baked-in cache instruction.
-        extra = (
-            build_document_instruction(fallback_contact)
-            if fallback_contact else None
-        )
+        # Always pass the CURRENT rules as the per-request system_instruction so
+        # any prompt changes take effect immediately without needing to recreate the cache.
+        # The cached content supplies the document; this supplies the up-to-date rules.
         llm_config = genai_types.GenerateContentConfig(
             cached_content=cache_name,
-            **({"system_instruction": extra} if extra else {}),
+            system_instruction=build_document_instruction(fallback_contact),
         )
     else:
         system = build_document_prompt(markdown_text, fallback_contact)
