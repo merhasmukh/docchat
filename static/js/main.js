@@ -541,9 +541,21 @@ questionInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
+const MAX_QUESTION_WORDS = 100;
+
 function sendMessage() {
   const question = questionInput.value.trim();
   if (!question || sendBtn.disabled) return;
+
+  if (question.split(/\s+/).length > MAX_QUESTION_WORDS) {
+    appendUserBubble(question);
+    questionInput.value = "";
+    questionInput.style.height = "auto";
+    const err = appendAssistantBubble();
+    setAssistantContent(err, `**Error:** Your question is too long. Please keep it under ${MAX_QUESTION_WORDS} words.`);
+    err.classList.remove("streaming");
+    return;
+  }
 
   stopNudgeTimer();
 

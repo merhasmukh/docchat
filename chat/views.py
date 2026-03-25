@@ -490,6 +490,8 @@ def chat_view(request):
     nudge_message = (data.get("nudge_message") or "").strip()
     if not question:
         return JsonResponse({"status": "error", "message": "Empty question"}, status=400)
+    if len(question.split()) > 100:
+        return JsonResponse({"status": "error", "message": "Your question is too long. Please keep it under 100 words."}, status=400)
 
     from .models import Document, LLMConfig, ChatMessage, ChatSession
 
