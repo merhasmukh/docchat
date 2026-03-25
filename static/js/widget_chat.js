@@ -623,10 +623,22 @@
   });
 
   // ── Chat: send message ─────────────────────────────────────────────────────
+  var MAX_QUESTION_WORDS = 100;
+
   function sendMessage() {
     if (isStreaming) return;
     var question = elInput.value.trim();
     if (!question) return;
+
+    if (question.split(/\s+/).length > MAX_QUESTION_WORDS) {
+      addUserBubble(question);
+      elInput.value = '';
+      autoResize();
+      var ref = addBotBubble('Your question is too long. Please keep it under ' + MAX_QUESTION_WORDS + ' words.', true);
+      ref.bubble.classList.remove('wg-cursor');
+      return;
+    }
+
     stopNudgeTimer();
 
     elInput.value = '';

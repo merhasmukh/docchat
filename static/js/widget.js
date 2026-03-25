@@ -138,6 +138,7 @@
 
   launcher.appendChild(bubbleText);
   launcher.appendChild(btn);
+  launcher.style.display = 'none';   // hidden until server health-check passes
   document.body.appendChild(launcher);
 
   // ── iframe wrapper ────────────────────────────────────────────────────────
@@ -151,6 +152,21 @@
   frame.allow = 'clipboard-write';
   wrap.appendChild(frame);
   document.body.appendChild(wrap);
+
+  // ── Server health-check: show bubble only when server is reachable ────────
+  (function pingServer() {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 5000); // 5 s timeout
+    fetch(server + '/status/', { method: 'GET', mode: 'no-cors', signal: ctrl.signal, cache: 'no-store' })
+      .then(function () {
+        clearTimeout(timer);
+        launcher.style.display = '';   // server alive → show bubble
+      })
+      .catch(function () {
+        clearTimeout(timer);
+        // server unreachable → launcher stays hidden
+      });
+  }());
 
   // ── Toggle open / close ───────────────────────────────────────────────────
   var isOpen = false;
