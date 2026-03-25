@@ -48,6 +48,16 @@ _CITATION_RE = re.compile(
 # After stripping a citation phrase, fix "are  10.05" → "are 10.05"
 _MULTI_SPACE_RE = re.compile(r"  +")
 
+# Strip literal language-hint echoes — model sometimes appends the instruction verbatim.
+# e.g. "… ચલાવે છે. (ગુજરાતી ભાષામાં જ જવાબ આપો.)"
+_LANG_HINT_LITERAL_RE = re.compile(
+    r"\s*\(\s*(?:"
+    r"ગુજરાતી\s+ભાષામાં\s+જ\s+જવાબ\s+આપો\."
+    r"|कृपया\s+हिंदी\s+में\s+उत्तर\s+दें।"
+    r"|Please\s+reply\s+in\s+English\."
+    r")\s*\)",
+)
+
 # Scrub sentences where the LLM echoes / explains the language instruction.
 # e.g. "Your question contains Gujarati words ... According to the rules, I must reply in Gujarati."
 _LANG_ECHO_RE = re.compile(
@@ -75,6 +85,7 @@ def strip_citation_phrases(text: str) -> str:
     """
     cleaned = _CITATION_RE.sub(" ", text)
     cleaned = _LANG_ECHO_RE.sub(" ", cleaned)
+    cleaned = _LANG_HINT_LITERAL_RE.sub("", cleaned)
     cleaned = _MULTI_SPACE_RE.sub(" ", cleaned).strip()
     # Re-capitalise if the first letter became lowercase after stripping
     if cleaned and cleaned[0].islower():
@@ -177,10 +188,46 @@ _CONVERSATIONAL_PHRASES = frozenset({
     "help", "help me",
 })
 
+# Single-word or very short reactions to a previous answer.
+# These bypass the document prompt and are handled as small-talk.
+_ACKNOWLEDGMENT_WORDS = frozenset({
+    # Positive reactions
+    "great", "nice", "perfect", "excellent", "wonderful", "brilliant",
+    "wow", "cool", "awesome", "fantastic", "superb", "amazing",
+    # Neutral acknowledgments
+    "yes", "no", "yeah", "yep", "nope", "yup",
+    "fine", "noted", "clear", "interesting",
+    "i see", "i got it", "makes sense", "that helps", "that helped",
+    "good to know", "very helpful", "helpful", "so helpful",
+    "ok thanks", "okay thanks", "ok thank you", "okay thank you",
+    "thanks a lot", "thank you so much", "many thanks",
+    "great thanks", "great thank you", "perfect thanks",
+    "that's great", "thats great", "that's nice", "thats nice",
+    "that's helpful", "thats helpful", "that's perfect", "thats perfect",
+})
+
+# Gujarati and Hindi acknowledgments (Unicode script)
+_GUJARATI_ACKNOWLEDGMENTS = frozenset({
+    "સારું", "ઠીક", "ઠીક છે", "બરોબર", "સમજ્યો", "સમજ્યા", "સમજ્યું",
+    "હા", "ના", "આભાર", "ધન્યવાદ", "ખૂબ સારું", "બહુ સારું",
+})
+
+_HINDI_ACKNOWLEDGMENTS = frozenset({
+    "अच्छा", "ठीक", "ठीक है", "समझ गया", "समझी", "बढ़िया", "शुक्रिया",
+    "हां", "हाँ", "नहीं", "धन्यवाद", "बहुत अच्छा",
+})
+
 CONVERSATIONAL_SYSTEM_PROMPT = (
     "You are GV પ્રવેશ મિત્ર, Gujarat Vidyapith's friendly admission assistant. "
-    "Respond warmly and naturally to the user's message. "
-    "Keep your reply brief. "
+    "The user may be greeting you, reacting to a previous answer, or asking a general question about you. "
+    "Guidelines:\n"
+    "• Greetings (hi, hello, namaste): introduce yourself briefly and invite a question.\n"
+    "• Positive reactions or acknowledgments (great, nice, ok, thanks, yes, સારું, अच्छा, etc.): "
+    "respond with one warm sentence and offer to help further. "
+    "Do NOT repeat or summarise the previous answer.\n"
+    "• Questions about your identity or abilities: explain briefly that you help with "
+    "Gujarat Vidyapith admission queries.\n"
+    "Keep every reply to 1–2 sentences. "
     "Always reply in the same language the user used "
     "(Gujarati, Hindi, English, or mixed Gujarati+English or Gujarati+Hindi)."
 )
@@ -195,10 +242,13 @@ def _build_rules(fallback_contact: str = "") -> str:
     """
     if fallback_contact.strip():
         rule3 = (
-            "3. When the exact answer is not available:\n"
-            "   • FIRST share the most closely related information that IS in the given context.\n"
-            "   • THEN naturally suggest contacting using the details below for the specific detail.\n"
-            "   • Use the contact info naturally — pick what's relevant (website, address).\n"
+            "3. When the answer is missing OR incomplete in the context:\n"
+            "   Apply this rule whenever:\n"
+            "   (a) the exact answer is not in the context at all, OR\n"
+            "   (b) only partial information is available (e.g. you know a course exists but not its fee/date/process).\n"
+            "   • Share whatever relevant information IS in the context.\n"
+            "   • Then naturally suggest the contact/website below for the remaining details.\n"
+            "   • Use the contact info naturally — pick what's relevant (website, address, phone).\n"
             "   • Do NOT dump the entire contact block verbatim.\n"
             "   • Do NOT say phrases like 'not in the context', 'not mentioned', or 'I don't have information about'.\n"
             "   • The whole reply must be in the user's language (Gujarati/Hindi/English).\n\n"
@@ -211,8 +261,8 @@ def _build_rules(fallback_contact: str = "") -> str:
             "   • FIRST share the most closely related information that IS in the context.\n"
             "     Example: asked about B.Sc. Physics → mention which B.Sc. courses ARE listed.\n"
             "   • EXCEPTION for degree names: BA, BCA, BE, MA, MCA, MBA etc. are DIFFERENT degrees.\n"
-            "     If user asks about BA and only BCA is listed, say 'BA is not listed; available\n"
-            "     programs include BCA, BCom...' — do NOT answer BCA details as if BA = BCA.\n"
+            "     If user asks about B.Tech and only BCA is listed, say 'B.Tech is not listed; available\n"
+            "     programs include BCA, BCom...' — do NOT answer BCA details as if B.Tech = BCA.\n"
             "   • Keep it brief and helpful — do not over-explain or apologise.\n"
             "   • NEVER say: 'not in the context', 'not mentioned', 'ઉલ્લેખ નથી',\n"
             "     'I don't have that information', or any similar phrase.\n"
@@ -232,7 +282,7 @@ def _build_rules(fallback_contact: str = "") -> str:
         "   DEGREE/COURSE ALIASING — CRITICAL: BA, BCA, BE, BEd, BSc, BCom, MA, MCA, MBA, MEd,\n"
         "   MSc, MCom, PGDCA, PGDM, PhD are ALL DIFFERENT programs — NEVER treat one as a substitute.\n"
         "   If the user asks about course X and only course Y is in the context:\n"
-        "   ✓ Say: 'BA course is not listed. Available undergraduate programs include BCA, BCom...'\n"
+        "   ✓ Say: 'B.Tech is not listed. Available undergraduate programs include BCA, BCom...'\n"
         "   ✗ Never: answer with Y's details as if Y = X.\n"
         + rule3
         + "4. CONVERSATION CONTEXT — Use the conversation history to understand the full meaning of\n"
@@ -245,11 +295,22 @@ def _build_rules(fallback_contact: str = "") -> str:
         "   ✓ Say: '500 rupees.'   ✗ Not: 'The context states the fee is 500 rupees.'\n"
         "6. Cross-language and abbreviation matching:\n"
         "   • 'admission' = 'પ્રવેશ' = 'प्रवेश', 'syllabus' = 'અભ્યાસક્રમ' = 'पाठ्यक्रम'.\n"
-        "   • Abbreviations with or without dots are identical: 'brs' = 'BRS' = 'B.R.S.',\n"
-        "     'bca' = 'BCA' = 'B.C.A.', 'mca' = 'MCA' = 'M.C.A.' — always search for both forms.\n"
+        "   • Abbreviations with or without dots are identical: 'ba' = 'BA' = 'B.A.',\n"
+        "     'bca' = 'BCA' = 'B.C.A.', 'mca' = 'MCA' = 'M.C.A.', 'brs' = 'BRS' = 'B.R.S.' — always search for both forms.\n"
+        "   • 'બીએ' (Gujarati) = BA = B.A. — treat these as the same program.\n"
         "7. BREVITY — By default reply in ONE sentence. Give a longer answer only when the question\n"
         "   inherently requires it (e.g. listing all courses, step-by-step process, fee breakdown).\n"
-        "   Never pad a short answer into multiple sentences."
+        "   Never pad a short answer into multiple sentences.\n"
+        "8. FORMATTING — When the answer is long (listing courses, fees, steps, etc.), use clear\n"
+        "   structure to make it easy to read:\n"
+        "   • Group related items under headings (e.g. Undergraduate, Postgraduate, Professional).\n"
+        "   • Use bullet points (•) for lists — one item per line.\n"
+        "   • Use bold (**label**) for category headings or important labels.\n"
+        "   • Never dump everything in one long run-on sentence when a list or grouped format is clearer.\n"
+        "   Example for 'list all courses':\n"
+        "   **Undergraduate:** B.A. (History, Economics), B.Sc. (Microbiology) ...\n"
+        "   **Postgraduate:** M.A. (Gujarati, Hindi ...), M.Com. ...\n"
+        "   **Professional:** BCA, B.Ed., MBA (Rural Management) ..."
     )
 
 
@@ -337,19 +398,33 @@ User question: {question}\
 
 def is_conversational(question: str) -> bool:
     """
-    Return True when the question is general small-talk that does not need
-    document context (greetings, pleasantries, meta questions about the bot).
+    Return True when the question is general small-talk or an acknowledgment
+    that does not need document context (greetings, pleasantries, reactions
+    like 'great'/'yes'/'thanks', meta questions about the bot).
     Uses fast set-lookups — no extra API call required.
     """
     q = question.lower().strip().rstrip("?!.,")
 
-    # Exact phrase match
-    if q in _CONVERSATIONAL_PHRASES or q in _GREETING_WORDS:
+    # Exact phrase match — greetings, pleasantries, acknowledgments
+    if q in _CONVERSATIONAL_PHRASES or q in _GREETING_WORDS or q in _ACKNOWLEDGMENT_WORDS:
         return True
 
     # Greeting word as the first word in a very short message (≤ 3 words)
     words = q.split()
     if words and words[0] in _GREETING_WORDS and len(words) <= 3:
+        return True
+
+    # Gujarati / Hindi script acknowledgments (exact match)
+    if q in _GUJARATI_ACKNOWLEDGMENTS or q in _HINDI_ACKNOWLEDGMENTS:
+        return True
+
+    # Very short Indic-script message (≤ 8 chars) — likely a one-word
+    # reaction such as "સારું", "ઠીક", "हां", "अच्छा" not yet in the lists.
+    stripped = q.strip()
+    if len(stripped) <= 8 and any(
+        '\u0A80' <= c <= '\u0AFF' or '\u0900' <= c <= '\u097F'
+        for c in stripped
+    ):
         return True
 
     return False

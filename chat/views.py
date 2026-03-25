@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 import uuid
 
@@ -122,13 +123,28 @@ def history_view(request):
     msgs = ChatMessage.objects.filter(session=session_obj).order_by("created_at")
     messages = []
     for msg in msgs:
-        messages.append({"role": "user", "content": msg.question})
-        messages.append({
-            "role":    "assistant",
-            "content": msg.answer,
-            "id":      msg.pk,
-            "liked":   msg.liked,
-        })
+        if msg.answer_source == "nudge":
+            messages.append({
+                "role":       "assistant",
+                "content":    msg.answer,
+                "id":         None,
+                "liked":      None,
+                "nudge":      True,
+                "created_at": msg.created_at.isoformat(),
+            })
+        else:
+            messages.append({
+                "role":       "user",
+                "content":    msg.question,
+                "created_at": msg.created_at.isoformat(),
+            })
+            messages.append({
+                "role":       "assistant",
+                "content":    msg.answer,
+                "id":         msg.pk,
+                "liked":      msg.liked,
+                "created_at": msg.created_at.isoformat(),
+            })
 
     return Response({"messages": messages, "user_name": session_obj.user_name or ""})
 
@@ -470,7 +486,8 @@ def chat_view(request):
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
 
-    question = (data.get("question") or "").strip()
+    question      = (data.get("question")      or "").strip()
+    nudge_message = (data.get("nudge_message") or "").strip()
     if not question:
         return JsonResponse({"status": "error", "message": "Empty question"}, status=400)
 
@@ -492,10 +509,40 @@ def chat_view(request):
             status=403,
         )
 
+    # ── Persist nudge message so LLM has context when user replies ────────────
+    if nudge_message:
+        from decimal import Decimal as _D
+        _ncfg   = LLMConfig.get_active()
+        _nprov  = _ncfg.provider
+        _nmodel = (
+            _ncfg.gemini_model  if _nprov == "gemini"
+            else _ncfg.sarvam_model if _nprov == "sarvam"
+            else _ncfg.ollama_model
+        )
+        ChatMessage.objects.create(
+            session               = session_obj,
+            provider              = _nprov,
+            model_name            = _nmodel,
+            question              = "",
+            answer                = nudge_message,
+            input_tokens          = 0,
+            output_tokens         = 0,
+            total_tokens          = 0,
+            total_cost            = _D(0),
+            response_time_seconds = 0.0,
+            answer_source         = "nudge",
+        )
+        logger.info(
+            "Nudge record saved | session_pk=%d | chars=%d",
+            session_obj.pk, len(nudge_message),
+        )
+
     # Load conversation history from DB
     db_messages = ChatMessage.objects.filter(session=session_obj).order_by("created_at")
     history = []
     for msg in db_messages:
+        if msg.answer_source == "nudge":
+            continue  # nudge bubbles are UI-only; feeding them to the LLM causes it to repeat the nudge text
         history.append({"role": "user",      "content": msg.question})
         history.append({"role": "assistant", "content": msg.answer})
 
@@ -658,6 +705,30 @@ def chat_view(request):
                 return f"{last_user} {q}"
         return q
 
+    _COMPREHENSIVE_PAT = re.compile(
+        r'\b(?:all\s+course|course[s]?\s+list|list\s+all|list\s+of\s+course|'
+        r'all\s+program|full\s+list|complete\s+list|all\s+subject|'
+        r'all\s+available|available\s+course)\b',
+        re.I,
+    )
+    _COURSE_CODE_PAT = re.compile(
+        r'\b(?:ba|ma|bca|mca|mba|bsc|msc|bcom|mcom|brs|bpes|'
+        r'bed|bped|med|mped|pgdca|phd)\b',
+        re.I,
+    )
+
+    def _effective_top_k(q: str) -> int:
+        """Return an elevated top_k for 'list all courses' type queries so that
+        all document sections (UG, PG, Professional, PhD) are included in context."""
+        if _COMPREHENSIVE_PAT.search(q):
+            return max(cfg_active.rag_top_k * 2, 10)
+        from .providers.utils import detect_question_language
+        if (len(q.split()) <= 5
+                and detect_question_language(q) in ("gujarati", "hindi")
+                and not _COURSE_CODE_PAT.search(q)):
+            return max(cfg_active.rag_top_k * 2, 10)
+        return cfg_active.rag_top_k
+
     # ── Agent mode: load memory; context is resolved inside the agent loop ──────
     user_memory = ""
     if cfg_active.agent_mode:
@@ -668,7 +739,7 @@ def chat_view(request):
         from .pipeline import retrieve_relevant_context_qdrant
         markdown_text = retrieve_relevant_context_qdrant(
             _rag_query(question, history), qdrant_collection, rag_embedding,
-            top_k=cfg_active.rag_top_k,
+            top_k=_effective_top_k(question),
         )
 
     elif cfg_active.provider == "sarvam":
@@ -685,7 +756,7 @@ def chat_view(request):
                 from .pipeline import retrieve_relevant_context_qdrant
                 markdown_text = retrieve_relevant_context_qdrant(
                     _rag_query(question, history), qdrant_collection, rag_embedding,
-                    top_k=cfg_active.rag_top_k,
+                    top_k=_effective_top_k(question),
                 )
             else:
                 markdown_text = full_text[:_SARVAM_BUDGET]

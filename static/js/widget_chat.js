@@ -52,7 +52,9 @@
   // ── State ──────────────────────────────────────────────────────────────────
   var verificationId  = null;
   var countdownTimer  = null;
-  var nudgeTimer      = null;
+  var nudgeTimer        = null;
+  var nudgeFired        = false;  // true once nudge bubble has been shown
+  var nudgeSentToServer = false;  // true once nudge has been included in a POST
   var isStreaming     = false;
   var greetingShown   = false;
   var pendingUserName = '';   // name captured from form or returning session
@@ -201,6 +203,8 @@
     greetingShown = false;
     pendingUserName = '';
     stopNudgeTimer();
+    nudgeFired        = false;
+    nudgeSentToServer = false;
     elMessages.innerHTML = '';
     // Clear auth fields and reset button state so the next session starts blank
     elName.value   = '';
@@ -221,32 +225,34 @@
   elNewChatBtn.addEventListener('click', resetSession);
 
   // ── Timestamp ──────────────────────────────────────────────────────────────
-  function makeTimestamp() {
-    var now = new Date();
-    var h = now.getHours(), m = now.getMinutes();
-    var ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
+  function makeTimestamp(isoString) {
+    var d = isoString ? new Date(isoString) : new Date();
     var ts = document.createElement('span');
     ts.className = 'wg-ts';
-    ts.textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+    ts.textContent = d.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour:     'numeric',
+      minute:   '2-digit',
+      hour12:   true,
+    });
     return ts;
   }
 
   // ── Message bubbles ────────────────────────────────────────────────────────
-  function addUserBubble(text) {
+  function addUserBubble(text, isoString) {
     var msg = document.createElement('div');
     msg.className = 'wg-msg wg-user';
     var bubble = document.createElement('div');
     bubble.className = 'wg-bubble';
     bubble.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
     msg.appendChild(bubble);
-    msg.appendChild(makeTimestamp());
+    msg.appendChild(makeTimestamp(isoString));
     elMessages.appendChild(msg);
     scrollToBottom();
     return msg;
   }
 
-  function addBotBubble(html, showCopy) {
+  function addBotBubble(html, showCopy, isoString) {
     var msg = document.createElement('div');
     msg.className = 'wg-msg wg-bot';
     var bubble = document.createElement('div');
@@ -271,7 +277,7 @@
       msg.appendChild(actions);
     }
 
-    var ts = makeTimestamp();
+    var ts = makeTimestamp(isoString);
     msg.appendChild(ts);
 
     elMessages.appendChild(msg);
@@ -287,9 +293,11 @@
 
   function startNudgeTimer() {
     if (!NUDGE) return;
+    if (nudgeFired) return;        // don't re-show if already shown this session
     stopNudgeTimer();
     nudgeTimer = setTimeout(function () {
       nudgeTimer = null;
+      nudgeFired = true;
       addBotBubble(renderMarkdown(NUDGE), false);
     }, NUDGE_DELAY);
   }
@@ -358,29 +366,35 @@
         elMessages.innerHTML = '';
         maybeShowGreeting();
         if (data.messages && data.messages.length) {
+          // If history already contains a nudge, don't fire the timer again
+          if (data.messages.some(function (m) { return m.nudge; })) {
+            nudgeFired = true;
+          }
           data.messages.forEach(function (m) {
             if (m.role === 'user') {
-              addUserBubble(m.content);
+              addUserBubble(m.content, m.created_at);
             } else {
-              var ref = addBotBubble(renderMarkdown(m.content), false);
-              // Build actions row for restored messages
-              var actions = document.createElement('div');
-              actions.className = 'wg-msg-actions';
-              var copyBtn = document.createElement('button');
-              copyBtn.className = 'wg-copy-btn';
-              copyBtn.title = 'Copy';
-              copyBtn.innerHTML = ICON_COPY;
-              copyBtn.addEventListener('click', function () {
-                navigator.clipboard.writeText(ref.bubble.innerText || ref.bubble.textContent).then(function () {
-                  copyBtn.innerHTML = ICON_CHECK;
-                  setTimeout(function () { copyBtn.innerHTML = ICON_COPY; }, 1500);
+              var ref = addBotBubble(renderMarkdown(m.content), false, m.created_at);
+              if (!m.nudge) {
+                // Build actions row only for real bot answers
+                var actions = document.createElement('div');
+                actions.className = 'wg-msg-actions';
+                var copyBtn = document.createElement('button');
+                copyBtn.className = 'wg-copy-btn';
+                copyBtn.title = 'Copy';
+                copyBtn.innerHTML = ICON_COPY;
+                copyBtn.addEventListener('click', function () {
+                  navigator.clipboard.writeText(ref.bubble.innerText || ref.bubble.textContent).then(function () {
+                    copyBtn.innerHTML = ICON_CHECK;
+                    setTimeout(function () { copyBtn.innerHTML = ICON_COPY; }, 1500);
+                  });
                 });
-              });
-              actions.appendChild(copyBtn);
-              var tsEl = ref.msg.querySelector('.wg-ts');
-              ref.msg.insertBefore(actions, tsEl || null);
-              if (m.id) {
-                _attachWidgetFeedback(ref, m.id, m.liked);
+                actions.appendChild(copyBtn);
+                var tsEl = ref.msg.querySelector('.wg-ts');
+                ref.msg.insertBefore(actions, tsEl || null);
+                if (m.id) {
+                  _attachWidgetFeedback(ref, m.id, m.liked);
+                }
               }
             }
           });
@@ -629,12 +643,19 @@
     var raw = '';
     var capturedMsgId = null;
 
+    var postBody = { question: question };
+    if (nudgeFired && !nudgeSentToServer) {
+      postBody.nudge_message = NUDGE;
+    }
     fetch('/chat/', {
       method: 'POST',
       headers: apiHeaders(),
-      body: JSON.stringify({ question: question }),
+      body: JSON.stringify(postBody),
     })
       .then(function (response) {
+        if (nudgeFired && !nudgeSentToServer && response.ok) {
+          nudgeSentToServer = true;
+        }
         if (!response.ok) {
           return response.text().then(function (t) {
             throw new Error('Server error ' + response.status + ': ' + t);

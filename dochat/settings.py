@@ -136,6 +136,14 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"   # output dir for collectstatic
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
+# ── Timezone ────────────────────────────────────────────────────────────────────
+# USE_TZ=True → all datetimes stored as UTC in the DB; Django returns
+# timezone-aware objects so .isoformat() includes "+00:00".
+# JavaScript's new Date() then parses it as UTC and toLocaleTimeString()
+# with timeZone:'Asia/Kolkata' displays the correct IST time.
+USE_TZ    = True
+TIME_ZONE = "Asia/Kolkata"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")

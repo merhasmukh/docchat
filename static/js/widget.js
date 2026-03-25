@@ -52,19 +52,33 @@
   // ── Inject styles ─────────────────────────────────────────────────────────
   var style = document.createElement('style');
   style.textContent = [
-    '#docchat-bubble{',
+    /* Launcher wrapper — positions the whole stack (floating label + circle button) */
+    '#docchat-launcher{',
     '  position:fixed;',
     '  bottom:calc(24px + env(safe-area-inset-bottom,0px));',
     '  ' + edge + ':max(24px,calc(24px + env(safe-area-inset-' + edge + ',0px)));',
+    '  display:flex;flex-direction:column;align-items:center;gap:8px;',
+    '  z-index:999998;',
+    '}',
+    /* Floating text badge above the icon */
+    '#docchat-bubble-text{',
+    '  background:#fff;',
+    '  color:' + color + ';',
+    '  font-family:system-ui,-apple-system,sans-serif;',
+    '  font-size:12px;font-weight:700;letter-spacing:.2px;',
+    '  padding:5px 14px;border-radius:20px;',
+    '  box-shadow:0 2px 10px rgba(0,0,0,.2);',
+    '  white-space:nowrap;pointer-events:none;line-height:1.3;',
+    '}',
+    /* Circle button */
+    '#docchat-bubble{',
     '  width:56px;height:56px;border-radius:50%;',
     '  background:' + color + ';border:none;cursor:pointer;',
     '  box-shadow:0 4px 16px rgba(0,0,0,.28);',
     '  display:flex;align-items:center;justify-content:center;',
-    '  z-index:999998;transition:transform .2s,box-shadow .2s;',
-    '  outline:none;',
+    '  outline:none;transition:transform .2s,box-shadow .2s;',
     '}',
     '#docchat-bubble:hover{transform:scale(1.08);box-shadow:0 6px 20px rgba(0,0,0,.35);}',
-    /* Minimum 56x56 tap target, already set. Active feedback for touch. */
     '#docchat-bubble:active{transform:scale(.94);}',
     '#docchat-bubble svg{width:26px;height:26px;fill:#fff;pointer-events:none;}',
 
@@ -92,12 +106,11 @@
     /* mobile: always full viewport */
     '@media(max-width:440px){',
     '  #docchat-wrap{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;border-radius:0!important;}',
-    '  #docchat-bubble{bottom:max(16px,calc(env(safe-area-inset-bottom,0px) + 16px));}',
+    '  #docchat-launcher{bottom:max(16px,calc(env(safe-area-inset-bottom,0px) + 16px));}',
     '}',
 
-    /* When the iframe covers the full viewport (fullpage mode or mobile popup),
-       move the close button to the top-right so it doesn't overlap the input bar */
-    '#docchat-bubble.dc-top{',
+    /* When the iframe covers the full viewport, move launcher to top-right as X button */
+    '#docchat-launcher.dc-top{',
     '  bottom:auto!important;',
     '  top:calc(16px + env(safe-area-inset-top,0px))!important;',
     '  right:16px!important;',
@@ -110,12 +123,22 @@
   var ICON_CHAT  = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>';
   var ICON_CLOSE = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
 
-  // ── Bubble button ─────────────────────────────────────────────────────────
+  // ── Launcher: floating label + circle button ───────────────────────────────
+  var launcher = document.createElement('div');
+  launcher.id = 'docchat-launcher';
+
+  var bubbleText = document.createElement('div');
+  bubbleText.id = 'docchat-bubble-text';
+  bubbleText.textContent = title;
+
   var btn = document.createElement('button');
   btn.id = 'docchat-bubble';
   btn.setAttribute('aria-label', 'Open ' + title);
   btn.innerHTML = ICON_CHAT;
-  document.body.appendChild(btn);
+
+  launcher.appendChild(bubbleText);
+  launcher.appendChild(btn);
+  document.body.appendChild(launcher);
 
   // ── iframe wrapper ────────────────────────────────────────────────────────
   var wrap = document.createElement('div');
@@ -141,14 +164,15 @@
   btn.addEventListener('click', function () {
     isOpen = !isOpen;
     btn.innerHTML = isOpen ? ICON_CLOSE : ICON_CHAT;
+    bubbleText.style.display = isOpen ? 'none' : '';
     btn.setAttribute('aria-label', (isOpen ? 'Close ' : 'Open ') + title);
     if (isOpen) {
-      if (coveringViewport()) btn.classList.add('dc-top');
+      if (coveringViewport()) launcher.classList.add('dc-top');
       wrap.classList.add('dc-open');
       requestAnimationFrame(function () { wrap.classList.add('dc-visible'); });
       frame.contentWindow.postMessage({ type: 'docchat:opened' }, server || '*');
     } else {
-      btn.classList.remove('dc-top');
+      launcher.classList.remove('dc-top');
       wrap.classList.remove('dc-visible');
       setTimeout(function () { wrap.classList.remove('dc-open'); }, 200);
     }

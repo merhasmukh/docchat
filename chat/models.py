@@ -101,6 +101,7 @@ class ChatMessage(models.Model):
         ("llm",          "LLM (normal call)"),
         ("session_cache", "Session cache"),
         ("liked_qa",     "Liked Q&A cache"),
+        ("nudge",        "Proactive nudge message"),
     ]
     answer_source = models.CharField(
         max_length=20,
