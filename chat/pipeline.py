@@ -398,9 +398,16 @@ def _retrieve_hybrid_qdrant(question: str, collection_name: str,
     merges the two ranked lists using RRF so pages that score well in both
     methods are surfaced first.  Returns the same formatted string as
     retrieve_relevant_context_qdrant.
+
+    Exception: Gujarati/Hindi queries skip BM25 and use vector-only retrieval.
+    BM25 hurts Indic queries because Gujarati/Hindi script tokens have zero
+    overlap with English-language document chunks.  Multilingual embeddings
+    handle cross-lingual retrieval natively, so pure vector search gives
+    better results for those languages.
     """
+    from .providers.utils import detect_question_language
+
     client = get_qdrant_client()
-    K = 60  # RRF constant — standard value, balances early vs. late ranks
 
     # 1. Scroll all points (payload only, no stored vectors needed)
     all_points, _ = client.scroll(
@@ -412,7 +419,32 @@ def _retrieve_hybrid_qdrant(question: str, collection_name: str,
 
     page_texts = {p.payload["page"]: p.payload["text"] for p in all_points}
 
-    # 2. BM25 ranking over every chunk
+    # 2. For Gujarati/Hindi queries use vector search only (no BM25)
+    lang = detect_question_language(question)
+    if lang in ("gujarati", "hindi"):
+        norm_q = _normalize_abbr(question)
+        if embedding_method == "gemini_embedding":
+            q_emb = _embed_gemini([norm_q])[0]
+        else:
+            q_emb = _embed_local([norm_q])[0]
+        vec_hits = client.query_points(
+            collection_name=collection_name,
+            query=q_emb,
+            limit=top_k,
+            with_payload=True,
+        ).points
+        top_pages = sorted(h.payload["page"] for h in vec_hits)
+        logger.info(
+            "Vector-only RAG (Indic) | collection=%s | q_chars=%d | top_k=%d | pages=%s",
+            collection_name, len(question), top_k, top_pages,
+        )
+        return "\n\n---\n\n".join(
+            f"<!-- Page {p} -->\n\n{page_texts[p]}" for p in top_pages
+        )
+
+    K = 60  # RRF constant — standard value, balances early vs. late ranks
+
+    # 3. BM25 ranking over every chunk (English/Roman queries only)
     corpus = [_tokenize_bm25(p.payload["text"]) for p in all_points]
     bm25 = BM25Okapi(corpus)
     q_tokens = _tokenize_bm25(question)
@@ -420,7 +452,7 @@ def _retrieve_hybrid_qdrant(question: str, collection_name: str,
     bm25_ranked = sorted(range(len(all_points)), key=lambda i: bm25_scores[i], reverse=True)
     bm25_rank = {all_points[i].payload["page"]: rank for rank, i in enumerate(bm25_ranked)}
 
-    # 3. Vector ranking via Qdrant (retrieve 4× as many candidates for RRF pool)
+    # 4. Vector ranking via Qdrant (retrieve 4× as many candidates for RRF pool)
     norm_q = _normalize_abbr(question)
     if embedding_method == "gemini_embedding":
         q_emb = _embed_gemini([norm_q])[0]
@@ -435,7 +467,7 @@ def _retrieve_hybrid_qdrant(question: str, collection_name: str,
     ).points
     vec_rank = {h.payload["page"]: rank for rank, h in enumerate(vec_hits)}
 
-    # 4. RRF fusion: score(page) = 1/(K + bm25_rank) + 1/(K + vec_rank)
+    # 5. RRF fusion: score(page) = 1/(K + bm25_rank) + 1/(K + vec_rank)
     #    Pages absent from the vector pool get a heavy penalty rank.
     rrf: dict[int, float] = {}
     for page in page_texts:
@@ -743,7 +775,16 @@ _ECHOED_HINT_RE = _re.compile(
     r"^\s*"
     r"(?:"
     # parenthetical hint we append: "(Please reply in English.)" etc.
-    r"\([^)]{0,120}\)\s*"
+    r"\([^)]{0,150}\)\s*"
+    r"|"
+    # Gujarati hint echoed without parentheses
+    r"ગુજરાતી\s+ભાષામાં\s+જ\s+જવાબ\s+આપો[.।]?\s*"
+    r"|"
+    # Hindi hint echoed without parentheses
+    r"कृपया\s+हिंदी\s+में\s+उत्तर\s+दें[।.]?\s*"
+    r"|"
+    # English hint echoed without parentheses
+    r"Please\s+reply\s+in\s+English[.]?\s*"
     r"|"
     # [INTERNAL: ...] or [INST: ...] style tags the model may echo
     r"\[(?:INTERNAL|INST)[^\]]{0,200}\]\s*"
@@ -754,13 +795,20 @@ _ECHOED_HINT_RE = _re.compile(
     _re.DOTALL,
 )
 
+# Minimum buffered chars before deciding the content is not an echoed hint.
+# Must be ≥ the longest hint phrase (Gujarati hint ≈ 35 chars → use 60 for safety).
+_HINT_BUF_MIN = 60
+
 
 def _scrub_echoed_hint_stream(gen):
     """
     Buffer the start of a streaming response and strip any echoed language-hint
     prefix before yielding tokens to the caller.
+
+    We hold tokens until we have enough characters to match any hint pattern
+    (including Gujarati/Hindi hints that don't start with '(' or '[').
     """
-    BUFFER_CAP = 400          # [INST]...[/INST] blocks can be ~300 chars
+    BUFFER_CAP = 500          # hard cap; [INST]...[/INST] blocks can be ~300 chars
     buf = ""
     prefix_stripped = False
 
@@ -769,8 +817,16 @@ def _scrub_echoed_hint_stream(gen):
             yield token
             continue
         buf += token
-        # Flush once we have enough context OR we see a clear end of any tag
-        if len(buf) >= BUFFER_CAP or (buf.lstrip() and not buf.lstrip().startswith(("[", "("))):
+        stripped = buf.lstrip()
+
+        # Keep buffering until we have enough chars to detect a hint OR the buffer
+        # is clearly inside a tagged block that needs the full 500-char cap.
+        if stripped.startswith(("[", "(")):
+            ready = len(buf) >= BUFFER_CAP
+        else:
+            ready = len(stripped) >= _HINT_BUF_MIN or len(buf) >= BUFFER_CAP
+
+        if ready:
             buf = _ECHOED_HINT_RE.sub("", buf).lstrip()
             prefix_stripped = True
             if buf:

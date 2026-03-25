@@ -72,6 +72,31 @@ let otpResendUsed     = false;
 // Track the active document filename
 let currentFilename = null;
 
+// ─── Nudge config + state ─────────────────────────────────────────────────────
+const NUDGE       = document.body.dataset.nudge      || "";
+const NUDGE_DELAY = parseInt(document.body.dataset.nudgeDelay || "10", 10) * 1000;
+let nudgeTimer        = null;
+let nudgeFired        = false;
+let nudgeSentToServer = false;
+
+function stopNudgeTimer() {
+  clearTimeout(nudgeTimer);
+  nudgeTimer = null;
+}
+
+function startNudgeTimer() {
+  if (!NUDGE) return;
+  if (nudgeFired) return;
+  stopNudgeTimer();
+  nudgeTimer = setTimeout(() => {
+    nudgeTimer = null;
+    nudgeFired = true;
+    const bubble = appendAssistantBubble();
+    bubble.classList.remove("streaming");
+    setAssistantContent(bubble, NUDGE);
+  }, NUDGE_DELAY);
+}
+
 // Session config (loaded from /session-config/ on page load)
 let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false, welcome_greeting: "" };
 let _pendingName = "";
@@ -131,6 +156,7 @@ function showChatMode(_filename) {
   chatSection.classList.remove("hidden");
   resetBtn.classList.remove("hidden");
   questionInput.focus();
+  startNudgeTimer();
 }
 
 function showNoDocMode() {
@@ -148,14 +174,17 @@ async function loadHistory() {
     showGreeting(data.user_name || "");
     if (!data.messages || data.messages.length === 0) return;
 
+    // If history already has a nudge, don't fire the timer again
+    if (data.messages.some(m => m.nudge)) nudgeFired = true;
+
     for (const msg of data.messages) {
       if (msg.role === "user") {
-        appendUserBubble(msg.content);
+        appendUserBubble(msg.content, msg.created_at);
       } else {
-        const bubble = appendAssistantBubble();
+        const bubble = appendAssistantBubble(msg.created_at);
         bubble.classList.remove("streaming");
         setAssistantContent(bubble, msg.content);
-        if (msg.id) {
+        if (msg.id && !msg.nudge) {
           _attachFeedbackButtons(bubble, msg.id, msg.liked);
         }
       }
@@ -490,18 +519,13 @@ otpInput.addEventListener("input", () => {
   otpInput.value = otpInput.value.replace(/\D/g, "").slice(0, 6);
 });
 
-// ─── Reset (end session → clear token → show modal for new session) ───────────
+// ─── Reset (end session → clear token → reload fresh page) ───────────────────
 resetBtn.addEventListener("click", () => {
+  stopNudgeTimer();
+  nudgeFired        = false;
+  nudgeSentToServer = false;
   clearToken();    // drop the localStorage token — old session stays in DB
-
-  chatWindow.innerHTML = `
-    <div class="welcome-msg">
-      <i class="fa-regular fa-comment-dots welcome-icon"></i>
-      <p>Ask me anything about the document</p>
-      <span class="welcome-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</span>
-    </div>`;
-
-  showUserModal();
+  location.reload();
 });
 
 // ─── Auto-expand textarea ─────────────────────────────────────────────────────
@@ -521,28 +545,35 @@ function sendMessage() {
   const question = questionInput.value.trim();
   if (!question || sendBtn.disabled) return;
 
+  stopNudgeTimer();
+
   appendUserBubble(question);
   questionInput.value = "";
   questionInput.style.height = "auto";
   setInputEnabled(false);
 
+  const nudgeToSend = (nudgeFired && !nudgeSentToServer) ? NUDGE : null;
   const asmBubble = appendAssistantBubble();
-  streamChat(question, asmBubble);
+  streamChat(question, asmBubble, nudgeToSend);
 }
 
 // ─── Streaming chat via fetch + ReadableStream ────────────────────────────────
-async function streamChat(question, bubble) {
+async function streamChat(question, bubble, nudgeMessage = null) {
   let rawText = "";
 
   try {
+    const postBody = { question };
+    if (nudgeMessage) postBody.nudge_message = nudgeMessage;
+
     const res = await fetch("/chat/", {
       method: "POST",
       headers: {
         ...apiHeaders(true),
         "X-CSRFToken": getCookie("csrftoken"),
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(postBody),
     });
+    if (nudgeMessage && res.ok) nudgeSentToServer = true;
 
     if (!res.ok) {
       let msg = "Request failed.";
@@ -604,18 +635,20 @@ async function streamChat(question, bubble) {
 }
 
 // ─── Bubble builders ──────────────────────────────────────────────────────────
-function makeTimestamp() {
-  const now = new Date();
-  let h = now.getHours(), m = now.getMinutes();
-  const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
+function makeTimestamp(isoString) {
+  const d = isoString ? new Date(isoString) : new Date();
   const span = document.createElement("span");
   span.className = "msg-time";
-  span.textContent = h + ":" + (m < 10 ? "0" : "") + m + " " + ampm;
+  span.textContent = d.toLocaleTimeString("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour:     "numeric",
+    minute:   "2-digit",
+    hour12:   true,
+  });
   return span;
 }
 
-function appendUserBubble(text) {
+function appendUserBubble(text, isoString) {
   removeWelcome();
   const wrap = document.createElement("div");
   wrap.className = "bubble-wrapper user-wrapper";
@@ -623,12 +656,12 @@ function appendUserBubble(text) {
   div.className = "bubble user";
   div.textContent = text;
   wrap.appendChild(div);
-  wrap.appendChild(makeTimestamp());
+  wrap.appendChild(makeTimestamp(isoString));
   chatWindow.appendChild(wrap);
   scrollToBottom();
 }
 
-function appendAssistantBubble() {
+function appendAssistantBubble(isoString) {
   removeWelcome();
   const wrapper = document.createElement("div");
   wrapper.className = "bubble-wrapper";
@@ -668,7 +701,7 @@ function appendAssistantBubble() {
   actions.appendChild(dislikeBtn);
   wrapper.appendChild(div);
   wrapper.appendChild(actions);
-  wrapper.appendChild(makeTimestamp());
+  wrapper.appendChild(makeTimestamp(isoString));
   chatWindow.appendChild(wrapper);
   scrollToBottom();
   return div;
