@@ -594,6 +594,8 @@ class ChatMessageInline(admin.TabularInline):
 
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
+    change_list_template = "admin/chat_session_change_list.html"
+
     list_display   = (
         "user_name", "user_email", "user_mobile", "document_name", "message_count",
         "total_input_tokens", "total_output_tokens", "total_cached_input_tokens",
@@ -614,9 +616,241 @@ class ChatSessionAdmin(admin.ModelAdmin):
     )
     inlines  = [ChatMessageInline]
     ordering = ["-last_activity"]
+    actions  = ["export_as_excel"]
 
     def has_add_permission(self, request):
         return False
+
+    # ── Excel export action ────────────────────────────────────────────────
+
+    @admin.action(description="Export selected sessions to Excel")
+    def export_as_excel(self, request, queryset):
+        import io
+        import openpyxl
+        from django.http import HttpResponse
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Chat Sessions"
+        ws.append(["Name", "Email", "Mobile", "Messages", "Last Activity", "Q&A…"])
+
+        for session in queryset.order_by("-last_activity"):
+            msgs = (
+                session.messages
+                .filter(answer_source="llm")
+                .order_by("created_at")
+            )
+            row = [
+                session.user_name,
+                session.user_email,
+                session.user_mobile,
+                session.message_count,
+                (
+                    session.last_activity.strftime("%B %d, %Y, %I:%M %p")
+                    if session.last_activity else ""
+                ),
+            ]
+            for msg in msgs:
+                row += [f"Q: {msg.question}", f"A: {msg.answer}"]
+            ws.append(row)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        response = HttpResponse(
+            buf.read(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = (
+            'attachment; filename="chat_sessions.xlsx"'
+        )
+        return response
+
+    # ── Analytics custom URL + view ────────────────────────────────────────
+
+    def get_urls(self):
+        from django.urls import path
+        return [
+            path(
+                "analytics/",
+                self.admin_site.admin_view(self.analytics_view),
+                name="chat_chatsession_analytics",
+            ),
+        ] + super().get_urls()
+
+    def analytics_view(self, request):
+        from collections import Counter
+        from datetime import timedelta
+
+        from django.db.models import Avg, Sum
+        from django.template.response import TemplateResponse
+        from django.utils import timezone
+
+        # ── Date range filter ──────────────────────────────────────────────
+        days_param = request.GET.get("days", "all")
+        if days_param in ("7", "30"):
+            since = timezone.now() - timedelta(days=int(days_param))
+            sessions = ChatSession.objects.filter(last_activity__gte=since)
+        else:
+            days_param = "all"
+            sessions = ChatSession.objects.all()
+
+        # ── Key metrics ────────────────────────────────────────────────────
+        total_users = sessions.count()
+        agg = sessions.aggregate(
+            total_msgs=Sum("message_count"),
+            avg_msgs=Avg("message_count"),
+        )
+        total_msgs = agg["total_msgs"] or 0
+        avg_msgs   = round(agg["avg_msgs"] or 0, 1)
+
+        # ── Daily activity (Python-side grouping, avoids TruncDate/USE_TZ issues) ──
+        import zoneinfo
+        from collections import defaultdict
+        from django.conf import settings as _settings
+
+        local_tz  = zoneinfo.ZoneInfo(getattr(_settings, "TIME_ZONE", "UTC"))
+        raw_rows  = (
+            sessions
+            .filter(last_activity__isnull=False)
+            .values("last_activity", "message_count")
+        )
+        daily_dict = defaultdict(lambda: {"users": 0, "msgs": 0})
+        for row in raw_rows:
+            date_str = row["last_activity"].astimezone(local_tz).strftime("%Y-%m-%d")
+            daily_dict[date_str]["users"] += 1
+            daily_dict[date_str]["msgs"]  += row["message_count"] or 0
+
+        daily_labels = sorted(daily_dict.keys())
+        daily_users  = [daily_dict[d]["users"] for d in daily_labels]
+        daily_msgs   = [daily_dict[d]["msgs"]  for d in daily_labels]
+
+        if daily_msgs:
+            peak_idx = daily_msgs.index(max(daily_msgs))
+            peak_day = f"{daily_labels[peak_idx]} ({daily_msgs[peak_idx]} msgs)"
+        else:
+            peak_day = "—"
+
+        # ── Engagement buckets ─────────────────────────────────────────────
+        eng_labels = ["0 messages", "1–5", "6–10", "11+"]
+        eng_vals = [
+            sessions.filter(message_count=0).count(),
+            sessions.filter(message_count__gte=1, message_count__lte=5).count(),
+            sessions.filter(message_count__gte=6, message_count__lte=10).count(),
+            sessions.filter(message_count__gte=11).count(),
+        ]
+
+        # ── Topic distribution ─────────────────────────────────────────────
+        TOPICS = {
+            "Courses & Programs":  [
+                "course", "ba", "bca", "bsc", "bcom", "mca", "mba",
+                "ma ", "msc", "phd", "degree", "digree",
+            ],
+            "Admission Process":   ["admission", "pravesh", "form", "apply", "addmission", "link"],
+            "GEETA Exam":          ["geeta", "gdpi", "exam", "hall ticket", "neet"],
+            "Fees & Costs":        ["fees", "fee", "fess", "cost", "hostel"],
+            "Jobs & Placement":    ["job", "salary", "placement", "corporate", "government"],
+            "Medium / Language":   ["english", "gujarati", "medium", "hindi"],
+            "Campus & Location":   ["city", "campus", "address", "ahmedabad"],
+            "Greetings / Misc":    ["hello", "hi", "hy", "thanks", "thank", "ok"],
+        }
+
+        questions_with_users = (
+            ChatMessage.objects
+            .filter(session__in=sessions, answer_source="llm")
+            .exclude(question="")
+            .values("question", "session__user_name", "session__user_mobile")
+        )
+        topic_counts = Counter()
+        topic_users  = defaultdict(set)   # topic → {(name, mobile)}
+
+        for row in questions_with_users:
+            ql     = row["question"].lower()
+            name   = row["session__user_name"]  or "—"
+            mobile = row["session__user_mobile"] or "—"
+            matched = False
+            for topic, kws in TOPICS.items():
+                if any(kw in ql for kw in kws):
+                    topic_counts[topic] += 1
+                    topic_users[topic].add((name, mobile))
+                    matched = True
+                    break
+            if not matched:
+                topic_counts["Other"] += 1
+                topic_users["Other"].add((name, mobile))
+
+        sorted_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)
+        topic_labels  = [t[0] for t in sorted_topics]
+        topic_vals    = [t[1] for t in sorted_topics]
+
+        # ── Word cloud ─────────────────────────────────────────────────────
+        import re as _re
+
+        _WC_STOPWORDS = {
+            # English
+            "the","a","an","is","in","it","of","to","for","and","or","are",
+            "was","were","be","been","have","has","had","do","does","did",
+            "will","would","could","should","may","might","can","this","that",
+            "these","those","i","you","he","she","we","they","my","your","his",
+            "her","our","their","what","which","who","how","when","where","why",
+            "not","no","yes","at","by","from","with","about","as","on","into",
+            "through","after","also","but","if","than","so","up","out","please",
+            "get","any","its","am","just","me","im","s","tell","know",
+            # Romanized Gujarati / Hindi stop words
+            "ma","che","na","nu","ni","to","hu","ky","aa","su","aave","rite",
+            "ke","hai","me","ki","ka","kya","bhi","aur","ho","ok","ohke","hy",
+            "aaor","thi","thai","maru","mare","gvp","ane","pan","em","ne",
+            "thi","nathi","chhe","hoy","tame","kem","shu","pan","puchhu",
+        }
+
+        word_freq: Counter = Counter()
+        for row in questions_with_users:
+            # Roman-script words only (wordcloud2.js renders Unicode but
+            # Gujarati/Devanagari glyphs need custom fonts; roman is reliable)
+            words = _re.sub(r"[^a-z\s]", " ", row["question"].lower()).split()
+            for w in words:
+                if len(w) >= 3 and w not in _WC_STOPWORDS:
+                    word_freq[w] += 1
+
+        # Top 80 words as [[word, freq], ...] for wordcloud2.js
+        wc_words = [[w, c] for w, c in word_freq.most_common(80)]
+
+        # Build ordered breakdown list for the template table
+        topic_breakdown = [
+            {
+                "topic": t,
+                "count": topic_counts[t],
+                "users": sorted(
+                    [{"name": u[0], "mobile": u[1]} for u in topic_users[t]],
+                    key=lambda u: u["name"].lower(),
+                ),
+            }
+            for t in topic_labels
+        ]
+
+        context = {
+            "title":          "Chat Analytics Dashboard",
+            "days_param":     days_param,
+            "total_users":    total_users,
+            "total_msgs":     total_msgs,
+            "avg_msgs":       avg_msgs,
+            "peak_day":       peak_day,
+            "topic_breakdown": topic_breakdown,
+            "wc_words":        wc_words,
+            "daily_labels": daily_labels,
+            "daily_users":  daily_users,
+            "daily_msgs":   daily_msgs,
+            "eng_labels":   eng_labels,
+            "eng_vals":     eng_vals,
+            "topic_labels": topic_labels,
+            "topic_vals":   topic_vals,
+            **self.admin_site.each_context(request),
+        }
+        return TemplateResponse(request, "admin/analytics_dashboard.html", context)
+
+    # ── Cost display helpers ───────────────────────────────────────────────
 
     @admin.display(description="Total Cost (₹)")
     def total_cost_inr(self, obj):
