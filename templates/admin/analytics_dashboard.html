@@ -123,6 +123,12 @@
     </div>
   </div>
 
+  <!-- Course Distribution -->
+  <div class="chart-card" style="margin-bottom:20px;">
+    <h3>Course Interest Distribution</h3>
+    <canvas id="chartCourses" style="max-height: 280px;"></canvas>
+  </div>
+
   <!-- Topic Breakdown Table -->
   <div class="chart-card" style="margin-bottom:20px;">
     <h3 style="margin-bottom:16px;">Topic Breakdown — Users &amp; Contact Numbers</h3>
@@ -185,6 +191,8 @@
 {{ eng_vals|json_script:"d-eng-vals" }}
 {{ topic_labels|json_script:"d-topic-labels" }}
 {{ topic_vals|json_script:"d-topic-vals" }}
+{{ course_labels|json_script:"d-course-labels" }}
+{{ course_vals|json_script:"d-course-vals" }}
 {{ wc_words|json_script:"d-wc-words" }}
 
 <script>
@@ -210,6 +218,8 @@ document.addEventListener("DOMContentLoaded", function () {
   var engVals     = j("d-eng-vals");
   var topicLabels = j("d-topic-labels");
   var topicVals   = j("d-topic-vals");
+  var courseLabels = j("d-course-labels");
+  var courseVals   = j("d-course-vals");
 
   // 1. Users per Day (bar)
   new Chart(document.getElementById("chartUsersPerDay"), {
@@ -269,6 +279,24 @@ document.addEventListener("DOMContentLoaded", function () {
     data: {
       labels: topicLabels,
       datasets: [{ label: "Questions", data: topicVals, backgroundColor: PALETTE.slice(0, topicLabels.length), borderRadius: 4 }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, grid: { color: gridColor }, ticks: { precision: 0 } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+
+  // Course distribution (horizontal bar)
+  new Chart(document.getElementById("chartCourses"), {
+    type: "bar",
+    data: {
+      labels: courseLabels,
+      datasets: [{ label: "Users", data: courseVals, backgroundColor: PALETTE.concat(PALETTE).slice(0, courseLabels.length), borderRadius: 4 }],
     },
     options: {
       indexAxis: "y",
