@@ -47,6 +47,7 @@ const modalCloseBtn   = document.getElementById("modal-close-btn");
 const userForm       = document.getElementById("user-form");
 const nameInput      = document.getElementById("user-name");
 const emailInput     = document.getElementById("user-email");
+const courseInput    = document.getElementById("user-course");
 const mobileInput    = document.getElementById("user-mobile");
 const countrySelect  = document.getElementById("country-code");
 const mobileError    = document.getElementById("mobile-error");
@@ -98,7 +99,7 @@ function startNudgeTimer() {
 }
 
 // Session config (loaded from /session-config/ on page load)
-let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false, welcome_greeting: "" };
+let sessionCfg = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false, collect_course: true, welcome_greeting: "" };
 let _pendingName = "";
 
 function showGreeting(name) {
@@ -138,7 +139,7 @@ function showGreeting(name) {
     if (sessionActive) {
       showChatMode(currentFilename);
       loadHistory();
-    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email && !sessionCfg.collect_mobile) {
+    } else if (!sessionCfg.collect_name && !sessionCfg.collect_email && !sessionCfg.collect_mobile && !sessionCfg.collect_course) {
       // Anonymous mode — create session immediately, no modal needed
       await createDirectSession({});
     } else {
@@ -201,15 +202,18 @@ function showUserModal() {
   // Show/hide fields based on admin config
   const nameField   = document.getElementById("um-field-name");
   const emailField  = document.getElementById("um-field-email");
+  const courseField = document.getElementById("um-field-course");
   const mobileField = document.getElementById("um-field-mobile");
   if (nameField)   nameField.style.display   = sessionCfg.collect_name   ? "" : "none";
   if (emailField)  emailField.style.display  = sessionCfg.collect_email  ? "" : "none";
+  if (courseField) courseField.style.display = sessionCfg.collect_course ? "" : "none";
   if (mobileField) mobileField.style.display = sessionCfg.collect_mobile ? "" : "none";
 
   // Always reset to step 1
   showOtpStep(1);
   nameInput.value   = "";
   emailInput.value  = "";
+  if (courseInput) courseInput.value = "";
   mobileInput.value = "";
   if (mobileError) mobileError.classList.add("hidden");
   modalError.classList.add("hidden");
@@ -322,6 +326,7 @@ userForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const name  = nameInput.value.trim();
   const email = emailInput.value.trim();
+  const course = courseInput ? (courseInput.value || "").trim() : "";
 
   if (sessionCfg.collect_name && !name) {
     modalError.textContent = "કૃપા કરી તમારું નામ જણાવો";
@@ -330,6 +335,11 @@ userForm.addEventListener("submit", async (e) => {
   }
   if (sessionCfg.collect_email && (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     modalError.textContent = "Please enter a valid email address.";
+    modalError.classList.remove("hidden");
+    return;
+  }
+  if (sessionCfg.collect_course && !course) {
+    modalError.textContent = "કૃપા કરી કોર્સ પસંદ કરો (Select Course)";
     modalError.classList.remove("hidden");
     return;
   }
@@ -350,6 +360,7 @@ userForm.addEventListener("submit", async (e) => {
     const payload = {};
     if (sessionCfg.collect_name)   payload.name   = name;
     if (sessionCfg.collect_email)  payload.email  = email;
+    if (sessionCfg.collect_course) payload.course = course;
     if (sessionCfg.collect_mobile) payload.mobile = mobile;
     const result = await createDirectSession(payload);
     if (result !== true) {
@@ -369,7 +380,7 @@ userForm.addEventListener("submit", async (e) => {
     const res  = await fetch("/request-otp/", {
       method:  "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      body:    JSON.stringify({ name, email, mobile }),
+      body:    JSON.stringify({ name, email, mobile, course }),
     });
     const data = await res.json();
 
