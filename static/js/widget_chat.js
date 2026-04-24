@@ -29,6 +29,7 @@
   var elStep2      = $('wg-step2');
   var elName       = $('wg-name');
   var elEmail      = $('wg-email');
+  var elCourse     = $('wg-course');
   var elMobile     = $('wg-mobile');
   var elCountry    = $('wg-country-code');
   var elMobileErr  = $('wg-mobile-error');
@@ -58,7 +59,7 @@
   var isStreaming     = false;
   var greetingShown   = false;
   var pendingUserName = '';   // name captured from form or returning session
-  var sessionCfg      = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false };
+  var sessionCfg      = { collect_name: true, collect_email: true, verify_email: true, collect_mobile: false, collect_course: true };
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function getCookie(name) {
@@ -169,9 +170,11 @@
     // Show/hide fields based on admin config
     var fieldName   = document.getElementById('wg-field-name');
     var fieldEmail  = document.getElementById('wg-field-email');
+    var fieldCourse = document.getElementById('wg-field-course');
     var fieldMobile = document.getElementById('wg-field-mobile');
     if (fieldName)   fieldName.style.display   = sessionCfg.collect_name   ? '' : 'none';
     if (fieldEmail)  fieldEmail.style.display  = sessionCfg.collect_email  ? '' : 'none';
+    if (fieldCourse) fieldCourse.style.display = sessionCfg.collect_course ? '' : 'none';
     if (fieldMobile) fieldMobile.style.display = sessionCfg.collect_mobile ? '' : 'none';
     // Adjust button label
     elReqBtn.textContent = (sessionCfg.collect_email && sessionCfg.verify_email)
@@ -209,6 +212,7 @@
     // Clear auth fields and reset button state so the next session starts blank
     elName.value   = '';
     elEmail.value  = '';
+    if (elCourse) elCourse.value = '';
     elMobile.value = '';
     var ccSelect = document.getElementById('wg-country-code');
     if (ccSelect) ccSelect.selectedIndex = 0;
@@ -465,12 +469,14 @@
   elReqBtn.addEventListener('click', function () {
     var name   = elName.value.trim();
     var email  = elEmail.value.trim();
+    var course = elCourse ? (elCourse.value || '').trim() : '';
     var mobile = '';
     pendingUserName = name;
     clearError(elAuthErr);
 
     if (sessionCfg.collect_name  && !name)  return showError(elAuthErr, 'કૃપા કરી તમારું નામ જણાવો ');
     if (sessionCfg.collect_email && !email) return showError(elAuthErr, 'કૃપા કરી તમારું ઈમેઇલ એડ્રેસ જણાવો ');
+    if (sessionCfg.collect_course && !course) return showError(elAuthErr, 'કૃપા કરી કોર્સ પસંદ કરો (Select Course)');
 
     if (sessionCfg.collect_mobile) {
       mobile = validateMobile();
@@ -484,6 +490,7 @@
       var payload = {};
       if (sessionCfg.collect_name)   payload.name   = name;
       if (sessionCfg.collect_email)  payload.email  = email;
+      if (sessionCfg.collect_course) payload.course = course;
       if (sessionCfg.collect_mobile) payload.mobile = mobile;
       createDirectSession(payload);
       return;
@@ -493,7 +500,7 @@
     fetch('/request-otp/', {
       method: 'POST',
       headers: apiHeaders(),
-      body: JSON.stringify({ name: name, email: email, mobile: mobile }),
+      body: JSON.stringify({ name: name, email: email, mobile: mobile, course: course }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {

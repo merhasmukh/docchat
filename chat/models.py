@@ -47,6 +47,7 @@ class ChatSession(models.Model):
     user_name           = models.CharField(max_length=200, blank=True, default="")
     user_email          = models.CharField(max_length=254, blank=True, default="")
     user_mobile         = models.CharField(max_length=20, blank=True, default="")
+    user_course         = models.CharField(max_length=100, blank=True, default="")
     document_name       = models.CharField(max_length=500, blank=True)
     started_at          = models.DateTimeField(auto_now_add=True)
     last_activity       = models.DateTimeField(auto_now=True)
@@ -364,6 +365,10 @@ class ChatSessionConfig(models.Model):
         default=False,
         help_text="Ask users for their mobile number before starting a chat (no OTP verification).",
     )
+    collect_course = models.BooleanField(
+        default=True,
+        help_text="Ask users for the course they are interested in.",
+    )
     verify_email = models.BooleanField(
         default=True,
         help_text=(
@@ -393,6 +398,7 @@ class ChatSessionConfig(models.Model):
         if self.collect_name:  parts.append("name")
         if self.collect_email: parts.append("email")
         if self.collect_mobile: parts.append("mobile")
+        if self.collect_course: parts.append("course")
         if self.collect_email and self.verify_email: parts.append("+OTP")
         return "Collect: " + (", ".join(parts) if parts else "none (anonymous)")
 
@@ -414,6 +420,7 @@ class EmailVerification(models.Model):
     email        = models.EmailField(db_index=True)
     name         = models.CharField(max_length=200)
     mobile       = models.CharField(max_length=20, blank=True, default="")
+    course       = models.CharField(max_length=100, blank=True, default="")
     code         = models.CharField(max_length=6)
     created_at   = models.DateTimeField(auto_now_add=True)
     expires_at   = models.DateTimeField()

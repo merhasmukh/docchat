@@ -563,10 +563,10 @@ class ModelPricingAdmin(admin.ModelAdmin):
 
 @admin.register(EmailVerification)
 class EmailVerificationAdmin(admin.ModelAdmin):
-    list_display    = ("email", "name", "code", "created_at", "expires_at", "is_verified", "resend_count")
+    list_display    = ("email", "name", "course", "code", "created_at", "expires_at", "is_verified", "resend_count")
     list_filter     = ("is_verified",)
-    search_fields   = ("email", "name")
-    readonly_fields = ("email", "name", "code", "created_at", "expires_at", "is_verified", "resend_count")
+    search_fields   = ("email", "name", "course")
+    readonly_fields = ("email", "name", "course", "code", "created_at", "expires_at", "is_verified", "resend_count")
     ordering        = ["-created_at"]
 
     def has_add_permission(self, request):
@@ -597,15 +597,15 @@ class ChatSessionAdmin(admin.ModelAdmin):
     change_list_template = "admin/chat_session_change_list.html"
 
     list_display   = (
-        "user_name", "user_email", "user_mobile", "document_name", "message_count",
+        "user_name", "user_email", "user_mobile", "user_course", "document_name", "message_count",
         "total_input_tokens", "total_output_tokens", "total_cached_input_tokens",
         "total_tokens", "avg_tokens_per_message",
         "total_cost_inr", "total_cache_read_cost_inr", "total_cache_storage_cost_inr",
         "avg_cost_per_message_inr", "started_at", "last_activity",
     )
-    search_fields  = ("user_name", "user_email", "user_mobile", "document_name")
+    search_fields  = ("user_name", "user_email", "user_mobile", "user_course", "document_name")
     readonly_fields = (
-        "session_key", "user_name", "user_email", "user_mobile", "document_name",
+        "session_key", "user_name", "user_email", "user_mobile", "user_course", "document_name",
         "started_at", "last_activity",
         "message_count",
         "total_input_tokens", "total_output_tokens", "total_tokens",
@@ -632,7 +632,7 @@ class ChatSessionAdmin(admin.ModelAdmin):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Chat Sessions"
-        ws.append(["Name", "Email", "Mobile", "Messages", "Last Activity", "Q&A…"])
+        ws.append(["Name", "Email", "Mobile", "Course", "Messages", "Last Activity", "Q&A…"])
 
         for session in queryset.order_by("-last_activity"):
             msgs = (
@@ -644,6 +644,7 @@ class ChatSessionAdmin(admin.ModelAdmin):
                 session.user_name,
                 session.user_email,
                 session.user_mobile,
+                session.user_course,
                 session.message_count,
                 (
                     session.last_activity.strftime("%B %d, %Y, %I:%M %p")

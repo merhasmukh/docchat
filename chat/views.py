@@ -207,6 +207,7 @@ def request_otp_view(request):
     name   = (request.data.get("name")   or "").strip()
     email  = (request.data.get("email")  or "").strip().lower()
     mobile = (request.data.get("mobile") or "").strip()
+    course = (request.data.get("course") or "").strip()
 
     if not name:
         return Response({"status": "error", "message": "Name is required."}, status=400)
@@ -225,13 +226,15 @@ def request_otp_view(request):
     if existing:
         existing.name   = name
         existing.mobile = mobile
-        existing.save(update_fields=["name", "mobile"])
+        existing.course = course
+        existing.save(update_fields=["name", "mobile", "course"])
         verification = existing
     else:
         verification = EmailVerification.objects.create(
             email      = email,
             name       = name,
             mobile     = mobile,
+            course     = course,
             code       = EmailVerification.generate_code(),
             expires_at = timezone.now() + datetime.timedelta(minutes=1),
         )
@@ -322,6 +325,7 @@ def verify_otp_view(request):
         user_name     = verification.name,
         user_email    = verification.email,
         user_mobile   = verification.mobile,
+        user_course   = verification.course,
         document_name = doc.original_filename if doc else "",
     )
 
@@ -403,6 +407,7 @@ def session_config_view(request):
         "collect_email":     cfg.collect_email,
         "verify_email":      cfg.verify_email,
         "collect_mobile":    cfg.collect_mobile,
+        "collect_course":    cfg.collect_course,
         "welcome_greeting":  cfg.welcome_greeting,
     })
 
@@ -426,6 +431,7 @@ def start_session_view(request):
     name   = (request.data.get("name")   or "").strip()
     email  = (request.data.get("email")  or "").strip().lower()
     mobile = (request.data.get("mobile") or "").strip()
+    course = (request.data.get("course") or "").strip()
 
     if cfg.collect_name and not name:
         return Response({"status": "error", "message": "Name is required."}, status=400)
@@ -437,6 +443,7 @@ def start_session_view(request):
         user_name=name     if cfg.collect_name   else "",
         user_email=email   if cfg.collect_email  else "",
         user_mobile=mobile if cfg.collect_mobile else "",
+        user_course=course if getattr(cfg, 'collect_course', False) else "",
     )
     return Response({"status": "ok", "token": session.session_key})
 
