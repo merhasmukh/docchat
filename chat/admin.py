@@ -831,6 +831,16 @@ class ChatSessionAdmin(admin.ModelAdmin):
             for t in topic_labels
         ]
 
+        # ── Course distribution ────────────────────────────────────────────
+        course_counts = Counter()
+        for c in sessions.values_list("user_course", flat=True):
+            cleaned_course = c.strip() if c else "Not Specified"
+            course_counts[cleaned_course] += 1
+
+        sorted_courses = course_counts.most_common(12)
+        course_labels = [c[0] for c in sorted_courses]
+        course_vals   = [c[1] for c in sorted_courses]
+
         context = {
             "title":          "Chat Analytics Dashboard",
             "days_param":     days_param,
@@ -847,6 +857,8 @@ class ChatSessionAdmin(admin.ModelAdmin):
             "eng_vals":     eng_vals,
             "topic_labels": topic_labels,
             "topic_vals":   topic_vals,
+            "course_labels": course_labels,
+            "course_vals":   course_vals,
             **self.admin_site.each_context(request),
         }
         return TemplateResponse(request, "admin/analytics_dashboard.html", context)
