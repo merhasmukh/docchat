@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <!-- interactive-widget=resizes-visual keeps the layout stable when the
        soft keyboard opens on Android Chrome — only the visual viewport shrinks,
        the layout viewport stays the same so the input bar never jumps. -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-visual">
   <meta name="theme-color" content="#C45500">
   <meta name="csrf-token" content="{{ csrf_token }}">
   <title>GV प्रवेश मित्र</title>
@@ -19,14 +21,15 @@
 
   <link rel="stylesheet" href="/static/css/style.css?v=7">
 </head>
+
 <body data-nudge="શું તમે કોઈ પ્રશ્ન પૂછવા માંગો છો? હું મદદ કરવા તૈયાર છું!" data-nudge-delay="120">
 
   <!-- ── NAVBAR ──────────────────────────────────────────────────────── -->
   <nav class="app-navbar" id="app-navbar">
     <div class="navbar-inner">
       <div class="navbar-brand-group">
-        <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
-             class="navbar-logo" alt="GV प्रवेश मित्र">
+        <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png" class="navbar-logo"
+          alt="GV प्रवेश मित्र">
         <div class="brand-text">
           <span class="brand-name">GV प्रवेश मित्र</span>
           <span class="brand-sub">Online</span>
@@ -61,27 +64,28 @@
       <div id="chat-window">
         <div class="welcome-msg">
           <div class="welcome-avatar">
-            <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
-                 class="welcome-logo" alt="GV प्रवेश मित्र">
+            <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png" class="welcome-logo"
+              alt="GV प्रवेश मित्र">
           </div>
-          <p class="welcome-greeting">ગૂજરાત વિદ્યાપીઠ આપનું સ્વાગત કરે છે.</p><p class="welcome-tagline">હું તમારો AI સહાયક છું. હું તમને ગૂજરાત વિદ્યાપીઠમાં પ્રવેશ મેળવવા બાબતે શું મદદ કરી શકું?
+          <p class="welcome-greeting">ગૂજરાત વિદ્યાપીઠ આપનું સ્વાગત કરે છે.</p>
+          <p class="welcome-tagline">હું તમારો AI સહાયક છું. હું તમને ગૂજરાત વિદ્યાપીઠમાં પ્રવેશ મેળવવા બાબતે શું મદદ
+            કરી શકું?
 
-<br class="d-none d-sm-inline">કૃપા કરીને તમારો પ્રશ્ન નીચે જણાવો.</p></div>
+            <br class="d-none d-sm-inline">કૃપા કરીને તમારો પ્રશ્ન નીચે જણાવો.
+          </p>
+        </div>
       </div>
 
       <div class="input-wrap">
         <div id="input-area">
-          <textarea
-            id="question-input"
-            placeholder="Type your message…"
-            rows="1"
-          ></textarea>
+          <textarea id="question-input" placeholder="Type your message…" rows="1"></textarea>
           <button id="send-btn" class="btn-send" title="Send message">
             <i class="fa-solid fa-paper-plane"></i>
           </button>
         </div>
         <p class="input-hint">Press Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</p>
-        <p class="input-hint">AI દ્વારા તૈયાર કરવામાં આવેલ જવાબોમાં ભૂલ હોઈ શકે છે. કૃપા કરીને મહત્વપૂર્ણ માહિતીની ચકાસણી કરો</p>
+        <p class="input-hint">AI દ્વારા તૈયાર કરવામાં આવેલ જવાબોમાં ભૂલ હોઈ શકે છે. કૃપા કરીને મહત્વપૂર્ણ માહિતીની
+          ચકાસણી કરો</p>
       </div>
 
     </section>
@@ -95,8 +99,8 @@
       <!-- Branded header strip -->
       <div class="um-accent-bar">
         <div class="um-accent-brand">
-          <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png"
-               class="modal-logo" alt="GV प्रवेश मित्र">
+          <img src="https://www.gujaratvidyapith.org/assets/images/gujarat-vidyapith-logo.png" class="modal-logo"
+            alt="GV प्रवेश मित्र">
           <span>GV प्रवेश मित्र</span>
         </div>
         <button id="modal-close-btn" class="um-close-btn" type="button" title="Close">
@@ -126,15 +130,15 @@
             <!-- <label for="user-course">Course</label> -->
             <div class="um-input-wrap">
               <i class="fa-solid fa-graduation-cap um-input-icon"></i>
-              <select id="user-course" class="um-country-select" style="width: 100%; border: none; outline: none; background: transparent; padding-left: 2.5rem;">
-                <option value="" disabled selected>કોર્સ પસંદ કરો (Select Course)</option>
+              <select id="user-course" required autocomplete="off" style="cursor: pointer;">
+                <option value="" disabled selected>કોર્સ પસંદ કરો</option>
                 <option value="BA">BA</option>
                 <option value="BSc">BSc</option>
                 <option value="BCom">BCom</option>
                 <option value="BRS">BRS</option>
                 <option value="BPES">BPES</option>
                 <option value="MA">MA</option>
-                <option value="MYASC">MYASC</option>
+                <option value="MYASC">MYASc(Yog)</option>
                 <option value="MSW">MSW</option>
                 <option value="MLibISc">MLibISc</option>
                 <option value="MCom">MCom</option>
@@ -157,19 +161,19 @@
             <div class="um-input-wrap um-phone-wrap">
               <select id="country-code" class="um-country-select">
                 <option value="+91" data-digits="10" data-pattern="^[6-9]" selected>🇮🇳 +91</option>
-                <option value="+1"  data-digits="10" data-pattern="^[2-9]">🇺🇸 +1</option>
+                <option value="+1" data-digits="10" data-pattern="^[2-9]">🇺🇸 +1</option>
                 <option value="+44" data-digits="10" data-pattern="">🇬🇧 +44</option>
                 <option value="+971" data-digits="9" data-pattern="">🇦🇪 +971</option>
                 <option value="+65" data-digits="8" data-pattern="">🇸🇬 +65</option>
                 <option value="+61" data-digits="9" data-pattern="">🇦🇺 +61</option>
                 <option value="+1" data-digits="10" data-pattern="^[2-9]">🇨🇦 +1</option>
                 <option value="+49" data-digits="11" data-pattern="">🇩🇪 +49</option>
-                <option value="+33" data-digits="9"  data-pattern="">🇫🇷 +33</option>
+                <option value="+33" data-digits="9" data-pattern="">🇫🇷 +33</option>
                 <option value="+81" data-digits="10" data-pattern="">🇯🇵 +81</option>
                 <option value="+86" data-digits="11" data-pattern="">🇨🇳 +86</option>
                 <option value="+55" data-digits="11" data-pattern="">🇧🇷 +55</option>
-                <option value="+27" data-digits="9"  data-pattern="">🇿🇦 +27</option>
-                <option value="+60" data-digits="9"  data-pattern="">🇲🇾 +60</option>
+                <option value="+27" data-digits="9" data-pattern="">🇿🇦 +27</option>
+                <option value="+60" data-digits="9" data-pattern="">🇲🇾 +60</option>
                 <option value="+92" data-digits="10" data-pattern="^3">🇵🇰 +92</option>
               </select>
               <input type="tel" id="user-mobile" placeholder="મોબાઈલ નંબર" autocomplete="tel-national" maxlength="15">
@@ -196,17 +200,8 @@
             <label for="otp-input">Verification Code</label>
             <div class="um-input-wrap">
               <i class="fa-solid fa-shield-halved um-input-icon"></i>
-              <input
-                type="text"
-                id="otp-input"
-                class="otp-input"
-                placeholder="000000"
-                maxlength="6"
-                inputmode="numeric"
-                pattern="[0-9]{6}"
-                autocomplete="one-time-code"
-                required
-              >
+              <input type="text" id="otp-input" class="otp-input" placeholder="000000" maxlength="6" inputmode="numeric"
+                pattern="[0-9]{6}" autocomplete="one-time-code" required>
             </div>
           </div>
 
@@ -256,4 +251,5 @@
 
   <script src="/static/js/main.js?v=11"></script>
 </body>
+
 </html>
