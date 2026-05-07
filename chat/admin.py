@@ -604,6 +604,7 @@ class ChatSessionAdmin(admin.ModelAdmin):
         "avg_cost_per_message_inr", "started_at", "last_activity",
     )
     search_fields  = ("user_name", "user_email", "user_mobile", "user_course", "document_name")
+    list_filter    = ("user_course",)
     readonly_fields = (
         "session_key", "user_name", "user_email", "user_mobile", "user_course", "document_name",
         "started_at", "last_activity",
@@ -679,17 +680,18 @@ class ChatSessionAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.analytics_view),
                 name="chat_chatsession_analytics",
             ),
+            path(
+                "analytics/export/",
+                self.admin_site.admin_view(self.analytics_export_view),
+                name="chat_chatsession_analytics_export",
+            ),
         ] + super().get_urls()
 
-    def analytics_view(self, request):
-        from collections import Counter
+    def _get_analytics_sessions(self, request):
         from datetime import timedelta
 
-        from django.db.models import Avg, Sum
-        from django.template.response import TemplateResponse
         from django.utils import timezone
 
-        # ── Date range filter ──────────────────────────────────────────────
         days_param = request.GET.get("days", "all")
         if days_param in ("7", "30"):
             since = timezone.now() - timedelta(days=int(days_param))
@@ -697,6 +699,110 @@ class ChatSessionAdmin(admin.ModelAdmin):
         else:
             days_param = "all"
             sessions = ChatSession.objects.all()
+
+        course_param = (request.GET.get("course") or "").strip()
+        if course_param == "__not_specified__":
+            sessions = sessions.filter(user_course="")
+        elif course_param:
+            sessions = sessions.filter(user_course__iexact=course_param)
+
+        return sessions, days_param, course_param
+
+    def analytics_export_view(self, request):
+        import io
+
+        import openpyxl
+        from django.http import HttpResponse
+
+        sessions, days_param, course_param = self._get_analytics_sessions(request)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Analytics Sessions"
+        ws.append(["Name", "Email", "Mobile", "Course", "Messages", "Last Activity", "Q&A..."])
+
+        for session in sessions.order_by("-last_activity"):
+            msgs = (
+                session.messages
+                .filter(answer_source="llm")
+                .order_by("created_at")
+            )
+            row = [
+                session.user_name,
+                session.user_email,
+                session.user_mobile,
+                session.user_course or "Not Specified",
+                session.message_count,
+                (
+                    session.last_activity.strftime("%B %d, %Y, %I:%M %p")
+                    if session.last_activity else ""
+                ),
+            ]
+            for msg in msgs:
+                row += [f"Q: {msg.question}", f"A: {msg.answer}"]
+            ws.append(row)
+
+        filename_parts = ["chat_analytics", f"{days_param}_days"]
+        if course_param == "__not_specified__":
+            filename_parts.append("not_specified")
+        elif course_param:
+            filename_parts.append(course_param.lower().replace(" ", "_"))
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        response = HttpResponse(
+            buf.read(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="{"_".join(filename_parts)}.xlsx"'
+        )
+        return response
+
+    def analytics_view(self, request):
+        from collections import Counter
+
+        from django.db.models import Avg, Sum
+        from django.template.response import TemplateResponse
+        from django.urls import reverse
+
+        # ── Date and course filters ────────────────────────────────────────
+        sessions, days_param, course_param = self._get_analytics_sessions(request)
+
+        base_courses = (
+            ChatSession.objects
+            .values_list("user_course", flat=True)
+            .distinct()
+            .order_by("user_course")
+        )
+        course_options = [
+            {"value": c.strip(), "label": c.strip()}
+            for c in base_courses
+            if c and c.strip()
+        ]
+        if ChatSession.objects.filter(user_course="").exists():
+            course_options.insert(0, {"value": "__not_specified__", "label": "Not Specified"})
+
+        def analytics_query(days=None, course=None):
+            params = {}
+            params["days"] = days if days is not None else days_param
+            selected_course = course if course is not None else course_param
+            if selected_course:
+                params["course"] = selected_course
+            return params
+
+        from urllib.parse import urlencode
+
+        analytics_url = reverse("admin:chat_chatsession_analytics")
+        export_url = reverse("admin:chat_chatsession_analytics_export")
+        day_links = {
+            d: f"{analytics_url}?{urlencode(analytics_query(days=d))}"
+            for d in ("7", "30", "all")
+        }
+        download_url = f"{export_url}?{urlencode(analytics_query())}"
 
         # ── Key metrics ────────────────────────────────────────────────────
         total_users = sessions.count()
@@ -844,6 +950,12 @@ class ChatSessionAdmin(admin.ModelAdmin):
         context = {
             "title":          "Chat Analytics Dashboard",
             "days_param":     days_param,
+            "course_param":   course_param,
+            "course_options": course_options,
+            "day_link_7":     day_links["7"],
+            "day_link_30":    day_links["30"],
+            "day_link_all":   day_links["all"],
+            "download_url":   download_url,
             "total_users":    total_users,
             "total_msgs":     total_msgs,
             "avg_msgs":       avg_msgs,

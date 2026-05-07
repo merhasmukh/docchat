@@ -12,9 +12,16 @@
   .analytics-wrap      { max-width: 1200px; }
   .analytics-topbar    { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
   .analytics-topbar h1 { margin:0; font-size:1.5rem; }
+  .filter-actions      { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .filter-btns         { display:flex; gap:8px; }
   .filter-btn          { padding:6px 16px; border-radius:4px; border:1px solid #ccc; background:#fff; cursor:pointer; text-decoration:none; color:#333; font-size:0.85rem; }
   .filter-btn.active   { background:#417690; color:#fff; border-color:#417690; }
+  .course-filter-form  { display:flex; align-items:center; gap:6px; margin:0; }
+  .course-filter-form label { font-size:.82rem; color:#555; font-weight:600; }
+  .course-filter       { min-width:170px; padding:6px 10px; border:1px solid #ccc; border-radius:4px; background:#fff; color:#333; font-size:.85rem; }
+  .download-btn        { font-style: #e9e7e7; padding:6px 14px; border-radius:4px; background:#417690; color:#fff; text-decoration:none; font-size:.85rem; border:1px solid #315a6d; white-space:nowrap; font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,.12); }
+  .download-btn:hover,
+  .download-btn:focus  { background:#315a6d; color:#fff; border-color:#264858; text-decoration:none; }
   .back-link           { font-size:0.85rem; color:#417690; text-decoration:none; }
   .back-link:hover     { text-decoration:underline; }
 
@@ -62,10 +69,23 @@
     <div>
       <a class="back-link" href="{% url 'admin:chat_chatsession_changelist' %}">← Back to Sessions</a>
     </div>
-    <div class="filter-btns">
-      <a href="?days=7"   class="filter-btn {% if days_param == '7'   %}active{% endif %}">Last 7 Days</a>
-      <a href="?days=30"  class="filter-btn {% if days_param == '30'  %}active{% endif %}">Last 30 Days</a>
-      <a href="?days=all" class="filter-btn {% if days_param == 'all' %}active{% endif %}">All Time</a>
+    <div class="filter-actions">
+      <div class="filter-btns">
+        <a href="{{ day_link_7 }}"   class="filter-btn {% if days_param == '7'   %}active{% endif %}">Last 7 Days</a>
+        <a href="{{ day_link_30 }}"  class="filter-btn {% if days_param == '30'  %}active{% endif %}">Last 30 Days</a>
+        <a href="{{ day_link_all }}" class="filter-btn {% if days_param == 'all' %}active{% endif %}">All Time</a>
+      </div>
+      <form class="course-filter-form" method="get">
+        <input type="hidden" name="days" value="{{ days_param }}">
+        <label for="course-filter">Course</label>
+        <select id="course-filter" name="course" class="course-filter" onchange="this.form.submit()">
+          <option value="">All Courses</option>
+          {% for option in course_options %}
+            <option value="{{ option.value }}" {% if option.value == course_param %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <a class="filter-btn" href="{{ download_url }}">Download Excel</a>
     </div>
   </div>
 
