@@ -96,6 +96,56 @@ class DocumentUploadForm(forms.ModelForm):
         js = ("admin/js/paste_text_toggle.js",)
 
 
+class DocumentTextEditForm(forms.ModelForm):
+    doc_label = forms.CharField(
+        label="Document name",
+        required=True,
+        max_length=500,
+        help_text="Update the label used for this pasted-text document.",
+    )
+    pasted_text = forms.CharField(
+        label="Text content",
+        required=True,
+        widget=forms.Textarea(attrs={"rows": 22, "style": "font-family:monospace;font-size:13px;"}),
+        help_text="Edit the full text used as the document context. Saving rebuilds the vector datastore.",
+    )
+    text_context_mode = forms.ChoiceField(
+        label="Context mode",
+        required=True,
+        choices=[
+            ("full", "Full Context — send all text to the LLM in every request"),
+            ("rag",  "Chunked / RAG — split into chunks and retrieve only relevant ones"),
+        ],
+        widget=forms.RadioSelect,
+    )
+
+    class Meta:
+        model  = Document
+        fields = ["is_active"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        doc = self.instance
+        if doc and doc.pk:
+            self.fields["doc_label"].initial = doc.original_filename
+            self.fields["text_context_mode"].initial = doc.context_mode
+            if doc.source_type == "text" and doc.markdown_path and os.path.exists(doc.markdown_path):
+                with open(doc.markdown_path, encoding="utf-8") as fh:
+                    self.fields["pasted_text"].initial = fh.read()
+
+    def clean(self):
+        data = super().clean()
+        doc = self.instance
+        if doc and doc.source_type == "text":
+            if not data.get("doc_label", "").strip():
+                self.add_error("doc_label", "Please provide a name for this document.")
+            if not data.get("pasted_text", "").strip():
+                self.add_error("pasted_text", "Please paste some text content.")
+            if not data.get("text_context_mode"):
+                self.add_error("text_context_mode", "Please choose a context mode.")
+        return data
+
+
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     form         = DocumentUploadForm
@@ -112,8 +162,10 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, **kwargs):
         if obj:
-            # Change view — only is_active is editable; use a plain ModelForm
-            # to avoid validating the upload-specific fields on DocumentUploadForm.
+            if obj.source_type == "text":
+                return DocumentTextEditForm
+
+            # File-backed documents stay read-only except for is_active.
             class _ChangeForm(forms.ModelForm):
                 class Meta:
                     model  = Document
@@ -124,6 +176,15 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def get_fields(self, request, obj=None):
         if obj:
+            if obj.source_type == "text":
+                return (
+                    "source_type", "doc_label", "pasted_text", "text_context_mode",
+                    "status", "error_message",
+                    "total_pages", "char_count", "context_mode",
+                    "is_active",
+                    "markdown_path", "json_path", "qdrant_collection", "gemini_cache_name",
+                    "created_at",
+                )
             return (
                 "source_type", "original_filename", "status", "error_message",
                 "total_pages", "char_count", "context_mode",
@@ -148,6 +209,10 @@ class DocumentAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         if change:
+            if obj.source_type == "text" and "pasted_text" in form.cleaned_data:
+                self._update_pasted_text(request, obj, form)
+                return
+
             if obj.is_active:
                 Document.objects.exclude(pk=obj.pk).filter(is_active=True).update(is_active=False)
             super().save_model(request, obj, form, change)
@@ -322,6 +387,96 @@ class DocumentAdmin(admin.ModelAdmin):
                 os.remove(upload_path)
 
         obj.save()
+
+    def _update_pasted_text(self, request, obj, form):
+        """Update an existing pasted-text document and rebuild its vector data."""
+        from .pipeline import build_rag_chunks, delete_liked_collection, split_text_into_pages, store_rag_chunks_qdrant
+        from .models import LLMConfig
+        from .providers.gemini import create_gemini_cache, delete_gemini_cache
+
+        markdown_text = form.cleaned_data["pasted_text"].strip()
+        mode_choice   = form.cleaned_data["text_context_mode"]
+
+        md_path = obj.markdown_path
+        json_path = obj.json_path
+        if not md_path or not json_path:
+            base_id   = str(uuid.uuid4())
+            md_path   = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".md")
+            json_path = os.path.join(settings.MARKDOWN_FOLDER, base_id + ".json")
+
+        old_gemini_cache_name = obj.gemini_cache_name
+        old_qdrant_collection = obj.qdrant_collection
+        collection_name       = old_qdrant_collection or f"doc_{obj.pk}"
+
+        try:
+            os.makedirs(settings.MARKDOWN_FOLDER, exist_ok=True)
+            with open(md_path, "w", encoding="utf-8") as fh:
+                fh.write(markdown_text)
+
+            cfg = LLMConfig.get_active()
+            if mode_choice == "rag":
+                pages_data = split_text_into_pages(
+                    markdown_text,
+                    chunk_size=cfg.rag_chunk_size,
+                    chunk_overlap=cfg.rag_chunk_overlap,
+                )
+            else:
+                pages_data = {
+                    "total_pages": 1,
+                    "pages": [{"page": 1, "markdown": markdown_text}],
+                }
+            pages_data["source_label"] = form.cleaned_data["doc_label"].strip()
+
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(pages_data, fh, ensure_ascii=False, indent=2)
+
+            chunks = build_rag_chunks(pages_data, cfg.rag_embedding)
+            store_rag_chunks_qdrant(chunks, collection_name, cfg.rag_embedding)
+
+            gemini_cache_name = None
+            if mode_choice == "full" and cfg.provider == "gemini" and settings.GEMINI_API_KEY:
+                gemini_cache_name = create_gemini_cache(markdown_text, cfg.gemini_model)
+
+            if old_gemini_cache_name:
+                try:
+                    delete_gemini_cache(old_gemini_cache_name)
+                except Exception as exc:
+                    logger.warning("Failed to delete old Gemini cache %s: %s", old_gemini_cache_name, exc)
+
+            if old_qdrant_collection:
+                try:
+                    delete_liked_collection(old_qdrant_collection)
+                except Exception as exc:
+                    logger.warning("Failed to delete liked-QA collection for %s: %s", old_qdrant_collection, exc)
+
+            obj.original_filename = form.cleaned_data["doc_label"].strip()
+            obj.source_type       = "text"
+            obj.markdown_path     = md_path
+            obj.json_path         = json_path
+            obj.qdrant_collection = collection_name
+            obj.gemini_cache_name = gemini_cache_name or ""
+            obj.char_count        = len(markdown_text)
+            obj.total_pages       = pages_data["total_pages"]
+            obj.context_mode      = mode_choice
+            obj.status            = "ready"
+            obj.error_message     = ""
+
+            if obj.is_active:
+                Document.objects.exclude(pk=obj.pk).filter(is_active=True).update(is_active=False)
+
+            obj.save()
+            self.message_user(
+                request,
+                f"'{obj.original_filename}' updated — vector datastore rebuilt with "
+                f"{pages_data['total_pages']} chunk(s), {len(markdown_text):,} chars, "
+                f"{mode_choice} mode.",
+            )
+
+        except Exception as exc:
+            obj.status        = "error"
+            obj.error_message = str(exc)
+            obj.save(update_fields=["status", "error_message"])
+            self.message_user(request, f"Failed to update pasted text: {exc}", level="error")
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
